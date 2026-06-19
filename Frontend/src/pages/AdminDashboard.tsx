@@ -1,47 +1,62 @@
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import NavBar from "../components/NavBar";
 import CharactersBarGraph from "../components/AdminDashboardComponents/CategoriesBarGraph";
-import {Navigate } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
-function AdminDashboard()
-{
-const token = localStorage.getItem("jwtToken");
-  if (!token) {
-    return <Navigate to="/Login" replace />;
-  }
-  let username: string;
-  let userId: number;
-  
-  try {
-    const decoded: any = jwtDecode(token);
-    const roles = decoded.roles || [];
+import { supabase } from "../config/supabaseClient";
 
-    // Check if user has the "user" role
-    if (!roles.includes("admin")) {
-      return <Navigate to="/Login" replace />;
-    }
+function AdminDashboard() {
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [username, setUsername] = useState("");
 
-    username = decoded.sub; // Typically, 'sub' is the username or subject
-    userId = decoded.userId; // Assumes userId is included in the token
+  useEffect(() => {
+    const checkAdmin = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          navigate("/Login");
+          return;
+        }
 
-    // If userId is not in the token, this will be undefined; handle accordingly if needed
-    if (userId === undefined) {
-      console.error("userId not found in token");
-      // Optionally redirect or set a default value
-      return <Navigate to="/Login" replace />;
-    }
-  } catch (error) {
-    console.error("Invalid token:", error);
-    return <Navigate to="/Login" replace />;
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("username, role")
+          .eq("user_id", session.user.id)
+          .single();
+
+        if (profileError || !profile || profile.role !== "admin") {
+          console.error("Not an admin:", profileError);
+          navigate("/Login");
+          return;
+        }
+
+        setUsername(profile.username);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error checking admin status:", error);
+        navigate("/Login");
+      }
+    };
+
+    checkAdmin();
+  }, [navigate]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#212121] text-white">
+        <p>Loading admin panel...</p>
+      </div>
+    );
   }
 
   return (
     <div>
-      <NavBar admin={true} logged={username}/>
+      <NavBar admin={true} logged={username} />
       <div className="w-[800px] h-full md:min-w-[100%] lg:min-w-[100%] flex flex-col items-center mt-20">
         <CharactersBarGraph />
       </div>
     </div>
-  )
+  );
 }
 
 export default AdminDashboard;

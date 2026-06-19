@@ -1,42 +1,55 @@
-import { useState } from "react";
-import { Navigate } from "react-router-dom"; // Import useLocation hook
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import AddCharacter from "../components/AddCharacter";
 import EditCharacter from "../components/EditCharacter";
 import RemoveCharacter from "../components/RemoveCharacter";
 import LoginNav from "../components/LoginNav";
-import { jwtDecode } from "jwt-decode";
+import { supabase } from "../config/supabaseClient";
 
 const ManageCharacters = () => {
   const [activeTab, setActiveTab] = useState("add");
+  const [loading, setLoading] = useState(true);
+  const [username, setUsername] = useState("");
+  const navigate = useNavigate();
 
-  const token = localStorage.getItem("jwtToken");
-  if (!token) {
-    return <Navigate to="/Login" replace />;
-  }
-  let username: string;
-  let userId: number;
-  
-  try {
-    const decoded: any = jwtDecode(token);
-    const roles = decoded.roles || [];
+  useEffect(() => {
+    const checkModerator = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          navigate("/Login");
+          return;
+        }
 
-    // Check if user has the "user" role
-    if (!roles.includes("moderator")) {
-      return <Navigate to="/Login" replace />;
-    }
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("username, role")
+          .eq("user_id", session.user.id)
+          .single();
 
-    username = decoded.sub; // Typically, 'sub' is the username or subject
-    userId = decoded.userId; // Assumes userId is included in the token
+        if (profileError || !profile || (profile.role !== "moderator" && profile.role !== "admin")) {
+          console.error("Not a moderator/admin:", profileError);
+          navigate("/Login");
+          return;
+        }
 
-    // If userId is not in the token, this will be undefined; handle accordingly if needed
-    if (userId === undefined) {
-      console.error("userId not found in token");
-      // Optionally redirect or set a default value
-      return <Navigate to="/Login" replace />;
-    }
-  } catch (error) {
-    console.error("Invalid token:", error);
-    return <Navigate to="/Login" replace />;
+        setUsername(profile.username);
+        setLoading(false);
+      } catch (error) {
+        console.error("Error checking moderator status:", error);
+        navigate("/Login");
+      }
+    };
+
+    checkModerator();
+  }, [navigate]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#212121] text-white">
+        <p>Loading moderator panel...</p>
+      </div>
+    );
   }
 
   return (
