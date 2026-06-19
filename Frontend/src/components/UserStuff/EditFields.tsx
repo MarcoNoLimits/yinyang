@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
+import { supabase } from "../../config/supabaseClient";
 
 export type User = {
-  userId: number;
+  userId: string | number;
   firstName: string;
   surname: string;
   username: string;
   password: string;
   email: string;
-  // Add any other fields your User object contains
 };
 
 const defaultUser: User = {
-  userId: 0,
+  userId: "",
   firstName: "",
   surname: "",
   username: "",
@@ -22,31 +22,24 @@ const defaultUser: User = {
 const EditFields = ({
   user,
 }: {
-  user: { username: string; userId: number };
+  user: { username: string; userId: string | number };
 }) => {
   const [userData, setUserData] = useState(defaultUser);
 
-  useEffect(() => {
-    const getUser = async () => {
-      const data = await fetchUserInfo(user.userId);
-
+  const refreshData = async () => {
+    const data = await fetchUserInfo(user.userId);
+    if (data) {
       setUserData(data);
-    };
+    }
+  };
 
-    getUser();
-  });
+  useEffect(() => {
+    refreshData();
+  }, [user.userId]);
 
   if (!user) {
     return <div className="text-white">Loading user data...</div>;
   }
-  const refreshData = async () => {
-    const res = await fetch(
-      `http://localhost:8080/auth/${user.userId}/all`,
-      {}
-    );
-    const updated = await res.json();
-    setUserData(updated);
-  };
 
   return (
     <div className="max-w-xl mx-auto p-6 rounded-xl space-y-6">
@@ -94,37 +87,21 @@ type PasswordFieldProps = {
 };
 
 const PasswordField: React.FC<PasswordFieldProps> = ({
-  username,
   onUpdate,
 }) => {
   const [editing, setEditing] = useState(false);
-  const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
 
   const handleSave = async () => {
     try {
-      const res = await fetch(
-        `http://localhost:8080/auth/${username}/update-password`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            oldPassword,
-            newPassword,
-          }),
-        }
-      );
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
 
-      if (!res.ok) {
-        const error = await res.text();
-        throw new Error(error || "Update failed");
-      }
+      if (error) throw error;
 
       setEditing(false);
-      setOldPassword("");
       setNewPassword("");
       setStatus("Password updated successfully!");
       onUpdate();
@@ -137,29 +114,20 @@ const PasswordField: React.FC<PasswordFieldProps> = ({
     <div className="flex flex-col gap-1 text-white">
       <label className="font-semibold">Password</label>
       {editing ? (
-        <>
-          <input
-            className="p-2 bg-gray-700 rounded"
-            type="password"
-            placeholder="Old password"
-            value={oldPassword}
-            onChange={(e) => setOldPassword(e.target.value)}
-          />
-          <input
-            className="p-2 bg-gray-700 rounded mt-2"
-            type="password"
-            placeholder="New password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-        </>
+        <input
+          className="p-2 bg-gray-700 rounded focus:outline-none"
+          type="password"
+          placeholder="New password (min 8 chars)"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
       ) : (
         <p className="p-2 bg-gray-700 rounded">********</p>
       )}
       <div className="flex gap-2">
         <button
           onClick={editing ? handleSave : () => setEditing(true)}
-          className={`px-4 py-1 mt-1 rounded ${
+          className={`px-4 py-1 mt-1 rounded text-white cursor-pointer ${
             editing
               ? "bg-green-600 hover:bg-green-700"
               : "bg-blue-600 hover:bg-blue-700"
@@ -172,11 +140,10 @@ const PasswordField: React.FC<PasswordFieldProps> = ({
           <button
             onClick={() => {
               setEditing(false);
-              setOldPassword("");
               setNewPassword("");
               setStatus("");
             }}
-            className="px-4 py-1 mt-1 rounded bg-red-600 hover:bg-red-700"
+            className="px-4 py-1 mt-1 rounded bg-red-600 hover:bg-red-700 text-white cursor-pointer"
           >
             Cancel
           </button>
@@ -200,32 +167,53 @@ const EditableField: React.FC<EditableFieldProps> = ({
   label,
   name,
   value,
-  username,
   onUpdate,
 }) => {
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState(value);
   const [status, setStatus] = useState("");
 
+  useEffect(() => {
+    setInputValue(value);
+  }, [value]);
+
   const handleSave = async () => {
     try {
-      const res = await fetch(
-        `http://localhost:8080/auth/${username}/update-${name}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ [name]: inputValue }),
-        }
-      );
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) throw new Error("Not authenticated");
 
-      if (!res.ok) throw new Error("Update failed");
+      const dbFieldName = name === "firstName" ? "first_name" : name === "surname" ? "surname" : name;
+
+      const { error: dbError } = await supabase
+        .from("users")
+        .update({ [dbFieldName]: inputValue })
+        .eq("user_id", authUser.id);
+
+      if (dbError) throw dbError;
+
+      // Sync auth user metadata
+      if (name === "email") {
+        const { error: authError } = await supabase.auth.updateUser({ email: inputValue });
+        if (authError) throw authError;
+      } else if (name === "username") {
+        const { error: authError } = await supabase.auth.updateUser({
+          data: { username: inputValue },
+        });
+        if (authError) throw authError;
+      } else {
+        const metadataName = name === "firstName" ? "first_name" : "surname";
+        const { error: authError } = await supabase.auth.updateUser({
+          data: { [metadataName]: inputValue },
+        });
+        if (authError) throw authError;
+      }
+
       setEditing(false);
       setStatus("Updated successfully!");
       onUpdate();
-    } catch (err) {
-      setStatus("Update failed.");
+    } catch (err: any) {
+      console.error(err);
+      setStatus(err.message || "Update failed.");
     }
   };
 
@@ -234,19 +222,19 @@ const EditableField: React.FC<EditableFieldProps> = ({
       <label className="font-semibold">{label}</label>
       {editing ? (
         <input
-          className="p-2 bg-gray-700 rounded"
+          className="p-2 bg-gray-700 rounded focus:outline-none"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
         />
       ) : (
         <p className="p-2 bg-gray-700 rounded">
-          {value ? value : "no name exists"}
+          {value ? value : "no value exists"}
         </p>
       )}
       <div className="flex gap-2">
         <button
           onClick={editing ? handleSave : () => setEditing(true)}
-          className={`px-4 py-1 mt-1 rounded ${
+          className={`px-4 py-1 mt-1 rounded text-white cursor-pointer ${
             editing
               ? "bg-green-600 hover:bg-green-700"
               : "bg-blue-600 hover:bg-blue-700"
@@ -258,11 +246,11 @@ const EditableField: React.FC<EditableFieldProps> = ({
         {editing && (
           <button
             onClick={() => {
-              setInputValue(value); // revert changes
+              setInputValue(value);
               setEditing(false);
               setStatus("");
             }}
-            className="px-4 py-1 mt-1 rounded bg-red-600 hover:bg-red-700"
+            className="px-4 py-1 mt-1 rounded bg-red-600 hover:bg-red-700 text-white cursor-pointer"
           >
             Cancel
           </button>
@@ -274,23 +262,28 @@ const EditableField: React.FC<EditableFieldProps> = ({
   );
 };
 
-const fetchUserInfo = async (userId: number) => {
+const fetchUserInfo = async (userId: string | number) => {
+  if (!userId) return null;
   try {
-    const response = await fetch(`http://localhost:8080/auth/${userId}/all`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
+    if (error) throw error;
+    if (data) {
+      return {
+        userId: data.user_id,
+        firstName: data.first_name,
+        surname: data.surname,
+        username: data.username,
+        email: data.email,
+        password: "",
+      };
     }
-
-    const userData = await response.json();
-    return userData;
   } catch (error) {
     console.error("Failed to fetch user info:", error);
-    return null;
   }
+  return null;
 };

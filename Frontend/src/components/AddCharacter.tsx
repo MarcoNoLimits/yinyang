@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { motion } from "framer-motion"; // Import Framer Motion
 import { personalityTraits } from "./personalityTraits";
+import { supabase } from "../config/supabaseClient";
 
 const AddCharacter = () => {
   const [name, setName] = useState("");
@@ -64,57 +65,38 @@ const AddCharacter = () => {
       return;
     }
 
-    const token = localStorage.getItem("jwtToken");
-    if (!token) {
-      setErrorMessage("You must be logged in to add a character");
-      setIsError(true);
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      // First upload the image to Cloudinary
-      const formData = new FormData();
-      formData.append('file', image);
+      // 1. Upload to Supabase Storage
+      const fileExt = image.name.split(".").pop();
+      const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
+      const filePath = `characters/${fileName}`;
 
-      const uploadResponse = await fetch('http://localhost:8080/api/upload/character', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
+      const { error: uploadError } = await supabase.storage
+        .from("profiles")
+        .upload(filePath, image, { upsert: true });
 
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload image');
+      if (uploadError) {
+        throw uploadError;
       }
 
-      const uploadResult = await uploadResponse.json();
-      const imageUrl = uploadResult.url;
+      const { data: { publicUrl } } = supabase.storage
+        .from("profiles")
+        .getPublicUrl(filePath);
 
-      // Now create the character with the Cloudinary URL
-      const characterData = {
-        charName: name,
-        charImg: imageUrl,
-        charDescription: details,
-        charPersonality: characteristics,
-        charPrompt: `I want you to respond to my prompts considering that you are the character ${name} with the following description ${details}. Your responses should also be ${characteristics} towards me. Okay?`,
-        charUsage: 0
-      };
+      // 2. Insert character into characters table
+      const { error: insertError } = await supabase
+        .from("characters")
+        .insert({
+          char_name: name,
+          char_img: publicUrl,
+          char_description: details,
+          char_personality: characteristics,
+          char_prompt: `I want you to respond to my prompts considering that you are the character ${name} with the following description ${details}. Your responses should also be ${characteristics} towards me. Okay?`,
+          char_usage: 0
+        });
 
-      // Send to backend
-      const response = await fetch('http://localhost:8080/moderator/characters', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(characterData),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to add character');
+      if (insertError) {
+        throw insertError;
       }
 
       // Show success message
@@ -131,9 +113,9 @@ const AddCharacter = () => {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
-      setErrorMessage(error instanceof Error ? error.message : 'An error occurred while adding the character');
+      setErrorMessage(error.message || 'An error occurred while adding the character');
       setIsError(true);
     } finally {
       setIsLoading(false);

@@ -28,7 +28,7 @@ export const goToChat = (
   ) => void,
   user: {
     username: string;
-    userId: number;
+    userId: string | number;
   },
   navigate: NavigateFunction,
   chatList: {

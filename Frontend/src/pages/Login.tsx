@@ -3,8 +3,8 @@ import { useState } from "react";
 import LoginNav from "../components/LoginNav";
 import { useNavigate } from "react-router-dom";
 import Auth from "../utils/Auth";
-import { jwtDecode } from "jwt-decode";
-import { uniqueNamesGenerator, Config, adjectives, colors, animals } from "unique-names-generator";
+import { supabase } from "../config/supabaseClient";
+import { uniqueNamesGenerator, adjectives, animals } from "unique-names-generator";
 
 function Login() {
   const [isEmailClicked, setIsEmailClicked] = useState(false);
@@ -14,54 +14,74 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
-  const customConfig: Config = {
-    dictionaries: [adjectives, colors],
-    separator: "-",
-    length: 2,
-  };
-
   const handleEmailClick = () => {
     setIsEmailClicked(true);
   };
 
-  const handleLogin = async (
-    e: React.FormEvent<HTMLFormElement>,
-    creds?: { username: string; password: string }
-  ) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const credentials = creds || { username, password };
 
     try {
-      const response = await fetch("http://localhost:8080/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        credentials: "include",
-        body: JSON.stringify(credentials),
+      let email = username;
+
+      // If the input username does not contain '@', select the email from users table
+      if (!username.includes("@")) {
+        const { data: userProfile, error: userError } = await supabase
+          .from("users")
+          .select("email")
+          .eq("username", username)
+          .single();
+
+        if (userError || !userProfile) {
+          setError("Username not found");
+          return;
+        }
+        email = userProfile.email;
+      }
+
+      // Perform signInWithPassword
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const { token } = data;
-        localStorage.setItem("jwtToken", token);
-        const decoded: any = jwtDecode(token);
-        const roles = decoded.roles || [];
-        Auth.login(token);
-
-        if (roles.includes("admin")) {
-          navigate("/AdminDashboard", { state: { username: credentials.username } });
-        } else if (roles.includes("moderator")) {
-          navigate("/Moderator", { state: { username: credentials.username } });
-        } else {
-          navigate("/", { state: { username: credentials.username } });
-        }
-      } else {
-        setError("Invalid Credentials");
+      if (signInError) {
+        setError(signInError.message);
+        return;
       }
-    } catch (error) {
-      console.error("Error:", error);
-      setError("An error occurred while logging in");
+
+      const token = signInData.session?.access_token;
+      if (token) {
+        localStorage.setItem("jwtToken", token);
+        Auth.login(token);
+      }
+
+      // Fetch user's role and details from the users profile table
+      const { data: profile, error: profileError } = await supabase
+        .from("users")
+        .select("*")
+        .eq("user_id", signInData.user?.id)
+        .single();
+
+      if (profileError || !profile) {
+        setError("Failed to fetch user profile details.");
+        return;
+      }
+
+      const userRole = profile.role;
+      const profileUsername = profile.username;
+
+      if (userRole === "admin") {
+        navigate("/AdminDashboard", { state: { username: profileUsername } });
+      } else if (userRole === "moderator") {
+        navigate("/Moderator", { state: { username: profileUsername } });
+      } else {
+        navigate("/", { state: { username: profileUsername } });
+      }
+
+    } catch (error: any) {
+      console.error("Error logging in:", error);
+      setError(error.message || "An error occurred while logging in");
     }
   };
 
@@ -115,35 +135,65 @@ function Login() {
                     dictionaries: [adjectives, animals],
                   });
                   setUsername(randomName);
-                  setPassword("Guest");
-                  const guestFormData = {
-                    firstName: randomName,
-                    surname: "Guest",
-                    username: randomName,
-                    email: `${randomName.toLowerCase()}@guest.com`,
-                    password: "Guest",
-                    confirmPassword: "Guest",
-                  };
-                  await new Promise((resolve) => setTimeout(resolve, 0));
+                  setPassword("Guest123!");
+                  const guestEmail = `${randomName.toLowerCase()}@guest.com`;
+                  const guestPassword = "Guest123!";
+
                   try {
-                    const response = await fetch("http://localhost:8080/auth/signup", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(guestFormData),
+                    // Sign up the guest user in Supabase with metadata
+                    const { error: signUpError } = await supabase.auth.signUp({
+                      email: guestEmail,
+                      password: guestPassword,
+                      options: {
+                        data: {
+                          first_name: randomName,
+                          surname: "Guest",
+                          username: randomName,
+                          role: "user",
+                        },
+                      },
                     });
-                    const data = await response.json();
-                    if (response.ok) {
-                      setError("User registered successfully!");
-                      await new Promise((resolve) => setTimeout(resolve, 1000));
-                      await handleLogin(
-                        { preventDefault: () => {} } as React.FormEvent<HTMLFormElement>,
-                        { username: randomName, password: "Guest" }
-                      );
-                    } else {
-                      setError(`Error: ${JSON.stringify(data)}`);
+
+                    if (signUpError) {
+                      setError(signUpError.message);
+                      return;
                     }
+
+                    // Sign in the guest user
+                    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+                      email: guestEmail,
+                      password: guestPassword,
+                    });
+
+                    if (signInError) {
+                      setError(signInError.message);
+                      return;
+                    }
+
+                    const token = signInData.session?.access_token;
+                    if (token) {
+                      localStorage.setItem("jwtToken", token);
+                      Auth.login(token);
+                    }
+
+                    // Fetch profile details
+                    const { data: profile, error: profileError } = await supabase
+                      .from("users")
+                      .select("*")
+                      .eq("user_id", signInData.user?.id)
+                      .single();
+
+                    if (profileError || !profile) {
+                      setError("Failed to fetch guest profile details.");
+                      return;
+                    }
+
+                    setError("User registered successfully!");
+                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                    navigate("/", { state: { username: profile.username } });
                   } catch (error) {
-                    setError("Failed to connect to server");
+                    console.error("Guest login failed:", error);
+                    setError("Failed to connect to Supabase");
                   }
                 }}
                 className="cursor-pointer w-full bg-gray-900 text-white flex items-center justify-center gap-1 p-1.5 sm:p-2 rounded-md shadow text-xs sm:text-sm md:text-base"

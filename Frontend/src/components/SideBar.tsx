@@ -10,18 +10,19 @@ import Trash from "../assets/Delete.svg"
 import { useNavigate } from "react-router-dom";
 import { Character } from "./UserStuff/CharacterGrid";
 import ShareWindow from "./ShareWindow";
-import { jwtDecode } from "jwt-decode";
+import { supabase } from "../config/supabaseClient";
+import { encryptId } from "../utils/crypto";
 
 
 interface SidebarProps {
   character:Character,
   historyList:{ name: string; image: string,details:string,chatId:number }[],
   updateActive:any,
-  user:{username:string, userId:number},
+  user:{username:string, userId:string | number},
   chatId:Promise<number> | number
 }
 
-const Sidebar: React.FC<SidebarProps> = (props: {user:{username:string, userId:number}, character:Character ,historyList:{ name: string; image: string,details:string,chatId:number }[],updateActive:any,chatId:Promise<number> | number }) => {
+const Sidebar: React.FC<SidebarProps> = (props: {user:{username:string, userId:string | number}, character:Character ,historyList:{ name: string; image: string,details:string,chatId:number }[],updateActive:any,chatId:Promise<number> | number }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isInfoCollapsed, setIsInfoCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -32,8 +33,6 @@ const Sidebar: React.FC<SidebarProps> = (props: {user:{username:string, userId:n
   const [activeChat,setActiveChat] = useState(props.chatId);
 
   const [user,setUser] = useState(props.user);
-  // Retrieve token from localStorage
-  const token = localStorage.getItem("jwtToken");
   const [shareWindow, setShareWindow] = useState(false);
   const [showInfoBarDeleteConfirm, setShowInfoBarDeleteConfirm] = useState(false);
   
@@ -73,149 +72,67 @@ const Sidebar: React.FC<SidebarProps> = (props: {user:{username:string, userId:n
 
   const [chatList,setChatList] = useState<{ name: string, image:string ,details:string, chatId:number }[]>([]);
 
-  const getCharFromId = async (id:number): Promise<{ name: string; image: string; details: string; } | undefined> =>
-  {
-    try 
-    {
-        const response = await fetch("http://localhost:8080/admin/characters/"+id, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-          },
-        });
-        if (response.ok) 
-        {
-          const data = await response.json();
-          
-          return { name: data.charName, image: data.charImg ,details:data.charDescription }
-        } 
-        else 
-        {
-          console.log("Character Not Found!");
-          return undefined;
-        }
-    }
-    catch(error)
-    {
-      console.error("Error:", error);
-      return undefined;
-    }
-  }
-
-  const getUserIdFromToken = () => {
-    if (!token) return null;
+  const getUserChats = async () => {
     try {
-      const decoded = jwtDecode<{ userId: number }>(token);
-      return decoded.userId;
-    } catch {
-      return null;
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+      const userId = authUser.id;
+
+      const { data, error } = await supabase
+        .from("chats")
+        .select(`
+          chat_id,
+          char_id,
+          characters (
+            char_name,
+            char_img,
+            char_description
+          )
+        `)
+        .eq("user_id", userId);
+
+      if (error) {
+        console.error("Error fetching chats:", error);
+        setChatList([]);
+        return;
+      }
+
+      if (data) {
+        const chats = data
+          .map((chatItem: any) => {
+            const char = chatItem.characters;
+            if (!char) return null;
+            return {
+              name: chatItem.chat_id.toString() + ". " + char.char_name,
+              chatId: chatItem.chat_id,
+              image: char.char_img ?? "No Image",
+              details: char.char_description ?? "N/A",
+            };
+          })
+          .filter((chat) => chat !== null) as { name: string; image: string; details: string; chatId: number }[];
+
+        setChatList(chats);
+      } else {
+        setChatList([]);
+      }
+    } catch (error) {
+      console.error("Error:", error);
     }
   };
 
-  const getUserChats = async ()=>
+  const filteredChats = chatList.filter((chat) =>
+    chat.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  useEffect(()=>
     {
-        const userId = getUserIdFromToken();
-        if (!userId) return;
-        const body = {userId};
-        console.log(userId)
-        
-        try 
-        {
-          const response = await fetch("http://localhost:8080/chat/getUserChats", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${token}`,
-            },
-            body: JSON.stringify(body),
-          });
+      getUserChats();
+      
+    },[props.chatId]);
   
-          if (response.ok) 
-          {
-            const data = await response.json();
-            let chats: { name: string; image: string,details:string,chatId:number }[] = [];
-
-            const promises = data.map(async (chatItem: { charId: number; chatId: any; userId: string; chatText:string; })=>
-            {
-              
-              const character = await getCharFromId(chatItem.charId);
-              
-              if(character!=null)
-              {
-                return {
-                  name: character?.name ?? "N/A",
-                  chatId:chatItem.chatId,
-                  image:character?.image ?? "No Image",
-                  details:character?.details ?? "N/A"
-                }
-                
-                
-              }
-              return null;
-              
-            })
-
-            const resolvedChats = await Promise.all(promises);
-
-            chats = resolvedChats.filter(chat => chat !== null) as { name: string; image: string; details: string; chatId: number }[]; //filter out nulls.
-
-            setChatList(chats.map((item)=>
-            {
-              item.name = item.chatId.toString() + ". " + item.name;
-              return item;
-            }));
-            
-            
-          } 
-          else 
-          {
-            setChatList([]);
-
-          }
-        } 
-        catch (error) 
-        {
-          console.error("Error:", error);
-        }
-
-        return;
-    }
-
-    const filteredChats = chatList.filter((chat) =>
-      chat.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    useEffect(()=>
-      {
-        getUserChats();
-        
-      },[props.chatId]);
-    
-    async function encrypt(toEncrypt:string)
+  async function encrypt(toEncrypt:string)
   {
-    try {
-        console.log("Encrypting....");
-        const token = localStorage.getItem("jwtToken");
-        const response = await fetch(`http://localhost:8080/crypt/encrypt/${toEncrypt}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`, // Send the JWT token for authorization
-          },
-        });
-
-        if (response.ok) {
-
-          const data = await response.json();
-          console.log(data.encrypted);
-          return data.encrypted;
-          
-        }
-      } catch (error) {
-        console.error("Error:", error);
-
-      }
+    return encryptId(toEncrypt);
   }
   const [shareUrl,setShareUrl] = useState("");
   async function generateShareUrl()
@@ -226,20 +143,18 @@ const Sidebar: React.FC<SidebarProps> = (props: {user:{username:string, userId:n
   } 
 
   const handleDeleteChat = async (chatId: number) => {
-    const token = localStorage.getItem("jwtToken");
     try {
-      const response = await fetch("http://localhost:8080/chat/deleteChat", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({ chatId }),
-      });
-      if (response.ok) {
+      const { error } = await supabase
+        .from("chats")
+        .delete()
+        .eq("chat_id", chatId);
+      if (!error) {
         getUserChats();
+      } else {
+        console.error("Error deleting chat:", error);
       }
     } catch (e) {
+      console.error(e);
     }
   };
 

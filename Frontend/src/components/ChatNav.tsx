@@ -4,7 +4,7 @@ import { ArrowLeft, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 interface NavbarProps {
-  user:{username:string, userId:number};
+  user:{username:string, userId:string | number};
   onDelete?: () => void;
 }
 

@@ -4,17 +4,10 @@ import Typing from "../components/Typing";
 import MessageBubble from "../components/MessageBubble";
 import SideBar from "../components/SideBar";
 import ChatNav from "../components/ChatNav";
-import { Navigate, useLocation, useParams, useNavigate } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
+import { useLocation, useParams, useNavigate } from "react-router-dom";
+import { supabase } from "../config/supabaseClient";
+import { decryptId } from "../utils/crypto";
 import { Character } from "../components/UserStuff/CharacterGrid";
-import { uniqueNamesGenerator, Config, adjectives, colors, animals } from 'unique-names-generator';
-// Define the shape of your decoded token
-interface DecodedToken {
-  sub: string;        // username
-  userId: number;     // userId included in token
-  roles: string[];    // roles as an array of strings
-  exp: number;        // expiration timestamp (optional)
-}
 
 export interface Message {
   text: string;
@@ -27,159 +20,129 @@ export default function Chat() {
   const [typing, setTyping] = useState<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Retrieve token from localStorage
-  const token = localStorage.getItem("jwtToken");
   const navigate = useNavigate();
-
-  // If no token, redirect to login
-  if (!token) {
-    return <Navigate to="/Login" replace />;
-  }
-
-  let username: string;
-  let userId: number;
-  let roles: string[];
-
-  // Decode token and handle potential errors
-  try {
-    const decoded: any = jwtDecode(token);
-    roles = decoded.roles || [];
-
-    // Check if user has the required role (for example, "user")
-    if (!roles.includes("user")) {
-      return <Navigate to="/Login" replace />;
-    }
-
-    username = decoded.sub; // Typically, 'sub' is the username or subject
-    userId = decoded.userId; // Assumes userId is included in the token
-
-    if (userId === undefined) {
-      console.error("userId not found in token");
-      return <Navigate to="/Login" replace />;
-    }
-  } catch (error) {
-    console.error("Invalid token:", error);
-    return <Navigate to="/Login" replace />;
-  }
-
-  // Create a user object from decoded data
-  const user = { username, userId };
   const { id } = useParams();
-
-  async function decrypt(toDecrypt:string):Promise<string>
-  {
-    try {
-        console.log("Decrypting....");
-        const token = localStorage.getItem("jwtToken");
-        const response = await fetch(`http://localhost:8080/crypt/decrypt/${toDecrypt}`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`, // Send the JWT token for authorization
-          },
-        });
-
-        if (response.ok) {
-
-          const data = await response.json();
-          return data.decrypted;
-          
-          
-        } else {
-          setError("Couldn't Encrypt");
-        }
-      } catch (error) {
-        console.error("Error:", error);
-        setError("Connection Error");
-        
-      }
-      return "";
-  }
-
-  // Getting the username from location.state if available (optional)
   const location = useLocation();
-  const [character,setCharacter] = useState<Character>(location.state?.character || {
+
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<{ username: string; userId: string } | null>(null);
+
+  const [character, setCharacter] = useState<Character>(location.state?.character || {
     charImg: "",
     charName: "",
     charId: 0,
     charDescription: "",
     charUsage: 0
   });
-  
 
   const [list, setList] = useState<
     { name: string; image: string; details: string; chatId: number }[]
   >([]);
   const [chatId, setChatId] = useState<number>(
-    location.state?.chatId || id?  -1 : 0
+    location.state?.chatId || id ? -1 : 0
   );
   const [firstRender, setFirstRender] = useState(true);
-  const getCharFromId = async (charId:number)=>
-      {
-        const body = { charId: charId };
 
-        try {
-          const response = await fetch("http://localhost:8080/auth/characters", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              
-            },
-            body: JSON.stringify(body),
-          });
-          
-          if (response.ok) {
-            
-            const data = await response.json();
-            
-            return data;
-            
-          } else {
-            setError("Char Not Found!");
-          }
-        } catch (error) {
-          console.error("Error:", error);
-          setError("Couldn't get character!");
+  // Check user session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          navigate("/Login");
+          return;
         }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("username, user_id, role")
+          .eq("user_id", session.user.id)
+          .single();
+
+        if (profileError || !profile) {
+          console.error("Profile not found:", profileError);
+          navigate("/Login");
+          return;
+        }
+
+        if (profile.role !== "user" && profile.role !== "admin" && profile.role !== "moderator") {
+          navigate("/Login");
+          return;
+        }
+
+        setUser({
+          username: profile.username,
+          userId: profile.user_id,
+        });
+        setLoading(false);
+      } catch (err) {
+        console.error("Error loading session:", err);
+        navigate("/Login");
       }
-      
-  const fetchCharId = async ()=>
-    {
-      const charId = await retrieveMessages(chatId,true);
-      const sharedChar = await getCharFromId(charId);
-      
-      setCharacter(sharedChar);
+    };
+
+    checkSession();
+  }, [navigate]);
+
+  const getCharFromId = async (charId: number) => {
+    try {
+      const { data, error } = await supabase
+        .from("characters")
+        .select("*")
+        .eq("char_id", charId)
+        .single();
+
+      if (error || !data) {
+        setError("Char Not Found!");
+        return null;
+      }
+
+      const mappedChar: Character = {
+        charId: data.char_id,
+        charName: data.char_name,
+        charImg: data.char_img,
+        charDescription: data.char_description,
+        charUsage: data.char_usage,
+      };
+
+      return mappedChar;
+    } catch (err) {
+      console.error("Error fetching character:", err);
+      setError("Couldn't get character!");
+      return null;
     }
+  };
+
+  const fetchCharId = async () => {
+    const charId = await retrieveMessages(chatId, true);
+    if (charId) {
+      const sharedChar = await getCharFromId(charId);
+      if (sharedChar) {
+        setCharacter(sharedChar);
+      }
+    }
+  };
 
   //Checks Shared Id
-  useEffect(()=>
-    {
-      const setDecryptedChatId = async (id:string)=>{
-        const decryptedID = await decrypt(id);
-        setChatId(parseInt(decryptedID,10));
-      }
-      
-      if(id)
-      {  
-        setDecryptedChatId(id);
-      }
-      else
-      {
-        setCharacter(location.state?.character);
-      }
-    },[]);
-    
-    useEffect(()=>{
-      if(chatId>0)
-      {
-        if(!character.charName)
-          fetchCharId();
-      }
-    },[chatId])
+  useEffect(() => {
+    if (id) {
+      const decryptedID = decryptId(id);
+      setChatId(parseInt(decryptedID, 10));
+    } else {
+      setCharacter(location.state?.character);
+    }
+  }, [id, location.state?.character]);
 
-    useEffect(() => {
-      setActiveCharacter(character);
-    }, [character]);
+  useEffect(() => {
+    if (chatId > 0) {
+      if (!character.charName)
+        fetchCharId();
+    }
+  }, [chatId]);
+
+  useEffect(() => {
+    setActiveCharacter(character);
+  }, [character]);
 
   function separateMessages(chatText: string): void {
     const allMessages = chatText.split("$$").filter((msg) => msg.trim() !== "");
@@ -193,48 +156,33 @@ export default function Chat() {
     setMessages(msgs);
   }
 
-  const retrieveMessages = async (chatId: number,gettingCharId?:boolean) => {
+  const retrieveMessages = async (chatId: number, gettingCharId?: boolean) => {
     if (chatId === 0) {
       setMessages([{ text: "Hello! How can I help you today?", sender: "ai" }]);
       return;
     }
-    const body = { chatId: chatId };
 
     try {
-      const response = await fetch("http://localhost:8080/chat/getMessages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`, // Send the JWT token for authorization
-        },
-        body: JSON.stringify(body),
-      });
-      
-      if (response.ok) {
-        
-        const data = await response.json();
-        
-        
-        if(id)
-        {
-          if(gettingCharId)
-          {
-            return data.charId;
-          }
-          else
-          {
-            separateMessages(data.chatText);
-            return data.charId;
-          }
-          
-        }
-        else
-        {
-          separateMessages(data.chatText);
-        }
-        
-      } else {
+      const { data, error } = await supabase
+        .from("chats")
+        .select("chat_id, char_id, user_id, chat_text")
+        .eq("chat_id", chatId)
+        .single();
+
+      if (error || !data) {
         setError("Chat Not Found!");
+        return;
+      }
+
+      if (id) {
+        if (gettingCharId) {
+          return data.char_id;
+        } else {
+          separateMessages(data.chat_text || "");
+          return data.char_id;
+        }
+      } else {
+        separateMessages(data.chat_text || "");
       }
     } catch (error) {
       console.error("Error:", error);
@@ -242,180 +190,46 @@ export default function Chat() {
     }
   };
 
-  const sendMessage = async (message: string) => 
-  {  
-    if(chatId==0 || id)
-    {
-      
-      const body = {charId:character.charId, userId: userId, message:""};
-      if(id)
-      {
-        let tempMessages = ""
-        messages.map((msg)=>{
-          tempMessages+=msg.text+"$$";
-        });
+  const sendMessage = async (message: string) => {
+    if (!user) return;
 
-        body.message= tempMessages;
+    if (chatId === 0 || id) {
+      let userMsgText = "";
+      if (id) {
+        messages.forEach((msg) => {
+          userMsgText += msg.text + "$$";
+        });
       }
+      userMsgText += message + "$$";
 
-      try 
-      {
-        const response = await fetch("http://localhost:8080/chat/createChat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-          },
-          body: JSON.stringify(body),
-        });
+      try {
+        // Create new chat in the chats table
+        const { data: newChat, error: insertError } = await supabase
+          .from("chats")
+          .insert({
+            user_id: user.userId,
+            char_id: character.charId,
+            chat_text: userMsgText
+          })
+          .select("chat_id")
+          .single();
 
-        if (!response.ok) 
-        {
-          setError("Chat Not Found!");
-          console.error("Error:", error);
-
+        if (insertError || !newChat) {
+          setError("Failed to create chat");
+          console.error("Error inserting chat:", insertError);
           return;
         }
-        else
-        {
-          const data = await response.json();
-          setChatId(data.chatId);
-          
-          setMessages([...messages, { text: message, sender: "user" }]);
-          setTyping(true);
 
-          const stringId = "" + data.chatId;
-          const stringCharId = "" + character.charId;
-          const stringUserId = "" + userId;
-
-          const modelBody = {user_id: stringUserId,chat_id: stringId, message:message, char_id:stringCharId};
-          console.log(modelBody);
-          const modelResponse = await fetch("https://qt8960e9abdedb851f8101ff2b98.free.beeceptor.com", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": "104.28.212.150",
-            },
-            body: JSON.stringify(modelBody),
-          });
-          
-  
-
-          if(modelResponse.ok)
-            {
-              const userBody = {chatId:data.chatId, message:message};
-              setChatId(data.chatId);
-              const userResponse = await fetch("http://localhost:8080/chat/sendMessage", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Authorization": `Bearer ${token}`,
-                },
-                body: JSON.stringify(userBody)
-              });
-
-              if(!userResponse.ok)
-              {
-                setError("Couldn't send message!");              
-              }
-              else
-              {
-                const aiData =await modelResponse.json();
-                let aiReply = aiData.response.content;
-                
-                  if(aiReply.includes("role="))
-                  {
-                    console.log("Before: \n" + aiReply);
-                    console.log(aiReply.search('="'));
-                    if(aiReply.search('="')==-1)
-                    {
-                      aiReply = aiReply.slice("role='assistant' content=".length, aiReply.length);
-                    }
-                    else
-                    {
-                      aiReply = aiReply.slice(aiReply.search('="')+2, aiReply.length);
-                    }
-                  }
-        
-                  if(aiReply.includes("images=None"))
-                  {
-                    
-                    aiReply = aiReply.slice(0,aiReply.search('images=None')-2);
-                    console.log("After: \n" + aiReply);
-                  } 
-                
-                const aiBody = {chatId:data.chatId, message:aiReply};
-                const aiResponse = await fetch("http://localhost:8080/chat/sendMessage", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`,
-                  },
-                  body: JSON.stringify(aiBody),
-                });
-              
-                if(aiResponse.ok)
-                {
-                  setTimeout(() => {
-                    setMessages((prev) => [
-                      ...prev,
-                      { text: aiReply, sender: "ai" },
-                    ]);
-                    setTyping(false);
-                  }, 1000);
-                  navigate("/Chat", {
-                    state: {
-                      character: character,
-                      historyList: list,
-                      user: user, // Pass user data here
-                      chatId: chatId, // Pass chatId data here (if it's 0 then a new chat is created)
-                    },
-                    replace: true,
-                  });
-                }
-                else
-                {
-                  setError("Couldn't send Reply!");
-                }
-              }
-            }
-            else
-            {
-              setError("Couldn't reach the model!");
-            }
-        } 
-      } 
-      catch (error) 
-      {
-        console.error("Error:", error);
-        setError("Chat Not Found!");
-      }
-      return;
-    }
-
-    try 
-    {
-      const body = {chatId:chatId, message:message};
-      
-      const response = await fetch("http://localhost:8080/chat/sendMessage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (response.ok) 
-      {
+        const newChatId = newChat.chat_id;
+        setChatId(newChatId);
         setMessages([...messages, { text: message, sender: "user" }]);
-        setTyping(true);       
+        setTyping(true);
 
-        const stringId = "" + chatId;
-        let stringCharId = "" + character.charId;
-        const stringUserId = "" + userId;
+        const stringId = "" + newChatId;
+        const stringCharId = "" + character.charId;
+        const stringUserId = "" + user.userId;
 
-        const modelBody = {user_id: stringUserId,chat_id: stringId, message:message, char_id:stringCharId};
+        const modelBody = { user_id: stringUserId, chat_id: stringId, message: message, char_id: stringCharId };
         const modelResponse = await fetch("https://qt8960e9abdedb851f8101ff2b98.free.beeceptor.com", {
           method: "POST",
           headers: {
@@ -425,40 +239,31 @@ export default function Chat() {
           body: JSON.stringify(modelBody),
         });
 
-        if(modelResponse.ok)
-        {
-          const data =await modelResponse.json();
-          let aiReply:string = data.response.content;
+        if (modelResponse.ok) {
+          const aiData = await modelResponse.json();
+          let aiReply = aiData.response.content;
 
-          if(aiReply.includes("role="))
-          {
-            if(aiReply.search('="')==-1)
-            {
+          if (aiReply.includes("role=")) {
+            if (aiReply.search('="') === -1) {
               aiReply = aiReply.slice("role='assistant' content=".length, aiReply.length);
-            }
-            else
-            {
-              aiReply = aiReply.slice(aiReply.search('="')+2, aiReply.length);
+            } else {
+              aiReply = aiReply.slice(aiReply.search('="') + 2, aiReply.length);
             }
           }
 
-          if(aiReply.includes("images=None"))
-          {
-            aiReply = aiReply.slice(0,aiReply.search('images=None')-2);
+          if (aiReply.includes("images=None")) {
+            aiReply = aiReply.slice(0, aiReply.search('images=None') - 2);
           }
 
-          const aiBody = {chatId:chatId, message:aiReply};
-          const aiResponse = await fetch("http://localhost:8080/chat/sendMessage", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${token}`,
-            },
-            body: JSON.stringify(aiBody),
-          });
+          const updatedChatText = userMsgText + aiReply + "$$";
+          const { error: aiUpdateError } = await supabase
+            .from("chats")
+            .update({ chat_text: updatedChatText })
+            .eq("chat_id", newChatId);
 
-          if(aiResponse.ok)
-          {
+          if (aiUpdateError) {
+            setError("Couldn't send Reply!");
+          } else {
             setTimeout(() => {
               setMessages((prev) => [
                 ...prev,
@@ -466,29 +271,112 @@ export default function Chat() {
               ]);
               setTyping(false);
             }, 1000);
-            setFirstRender(true);
+            navigate("/Chat", {
+              state: {
+                character: character,
+                historyList: list,
+                user: user,
+                chatId: newChatId,
+              },
+              replace: true,
+            });
           }
-          else
-          {
-            setError("Couldn't send Reply!");
-          }
-        }
-        else
-        {
+        } else {
           setError("Couldn't reach the model!");
+          setTyping(false);
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        setError("Chat Not Found!");
+        setTyping(false);
+      }
+      return;
+    }
 
+    try {
+      const { data: existingChat, error: fetchError } = await supabase
+        .from("chats")
+        .select("chat_text")
+        .eq("chat_id", chatId)
+        .single();
+
+      if (fetchError || !existingChat) {
+        setError("Chat not found!");
+        return;
+      }
+
+      const currentChatText = existingChat.chat_text || "";
+      const updatedUserChatText = currentChatText + message + "$$";
+
+      const { error: userUpdateError } = await supabase
+        .from("chats")
+        .update({ chat_text: updatedUserChatText })
+        .eq("chat_id", chatId);
+
+      if (userUpdateError) {
+        setError("Couldn't send message!");
+        return;
+      }
+
+      setMessages([...messages, { text: message, sender: "user" }]);
+      setTyping(true);
+
+      const stringId = "" + chatId;
+      const stringCharId = "" + character.charId;
+      const stringUserId = "" + user.userId;
+
+      const modelBody = { user_id: stringUserId, chat_id: stringId, message: message, char_id: stringCharId };
+      const modelResponse = await fetch("https://qt8960e9abdedb851f8101ff2b98.free.beeceptor.com", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "104.28.212.150",
+        },
+        body: JSON.stringify(modelBody),
+      });
+
+      if (modelResponse.ok) {
+        const data = await modelResponse.json();
+        let aiReply: string = data.response.content;
+
+        if (aiReply.includes("role=")) {
+          if (aiReply.search('="') === -1) {
+            aiReply = aiReply.slice("role='assistant' content=".length, aiReply.length);
+          } else {
+            aiReply = aiReply.slice(aiReply.search('="') + 2, aiReply.length);
+          }
         }
 
-      } 
-      else 
-      {
-        setError("Couldn't send message!");
+        if (aiReply.includes("images=None")) {
+          aiReply = aiReply.slice(0, aiReply.search('images=None') - 2);
+        }
+
+        const updatedAIChatText = updatedUserChatText + aiReply + "$$";
+        const { error: aiUpdateError } = await supabase
+          .from("chats")
+          .update({ chat_text: updatedAIChatText })
+          .eq("chat_id", chatId);
+
+        if (aiUpdateError) {
+          setError("Couldn't send Reply!");
+        } else {
+          setTimeout(() => {
+            setMessages((prev) => [
+              ...prev,
+              { text: aiReply, sender: "ai" },
+            ]);
+            setTyping(false);
+          }, 1000);
+          setFirstRender(true);
+        }
+      } else {
+        setError("Couldn't reach the model!");
+        setTyping(false);
       }
-    } 
-    catch (error) 
-    {
+    } catch (error) {
       console.error("Error:", error);
       setError("Chat Not Found!");
+      setTyping(false);
     }
       
   };
@@ -519,6 +407,10 @@ export default function Chat() {
       
     },[activeCharacter]);
     
+
+  if (loading || !user) {
+    return <div className="text-white text-center mt-10">Loading session...</div>;
+  }
 
   return (
     <div>

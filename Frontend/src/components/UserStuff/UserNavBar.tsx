@@ -4,11 +4,12 @@ import UserSearchBar from "./UserSearch";
 import { useEffect, useState } from "react";
 import { useCharacterContext } from "./CharacterContext";
 import { useNavigate } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
+import { supabase } from "../../config/supabaseClient";
 
 export interface UserNavBarProps {
-  chatList: { name: string; image: string; chatId: number }[];
+  chatList: { name: string; image: string; details?: string; chatId?: number }[];
   username: string;
+  handleDelete?: (buttonName: string) => void;
 }
 
 const UserNavBar: React.FC<Omit<UserNavBarProps, 'handleDelete'>> = ({
@@ -30,17 +31,55 @@ const UserNavBar: React.FC<Omit<UserNavBarProps, 'handleDelete'>> = ({
     });
   };
 
+  const getUserChats = async () => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+      
+      const { data, error } = await supabase
+        .from("chats")
+        .select(`
+          chat_id,
+          char_id,
+          characters (
+            char_name,
+            char_img,
+            char_description
+          )
+        `)
+        .eq("user_id", authUser.id);
+
+      if (data) {
+        const chats = data
+          .map((chatItem: any) => {
+            const char = chatItem.characters;
+            if (!char) return null;
+            return {
+              name: char.char_name,
+              image: char.char_img ?? "No Image",
+              details: char.char_description ?? "N/A",
+              chatId: chatItem.chat_id,
+            };
+          })
+          .filter(chat => chat !== null) as { name: string; image: string; details: string; chatId: number }[];
+        setUserChats(chats);
+      }
+    } catch (error) {
+      console.error("Error fetching user chats:", error);
+    }
+  };
+
   useEffect(() => {
     const fetchAvatar = async () => {
       try {
-        const response = await fetch(`http://localhost:8080/auth/${username}/profile-image`);
-  
-        if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`);
+        const { data: userData, error } = await supabase
+          .from("users")
+          .select("user_img")
+          .eq("username", username)
+          .single();
+        if (userData && userData.user_img) {
+          setAvatar(userData.user_img);
         }
-  
-        const data = await response.text();
-        setAvatar(data);
       } catch (error) {
         console.error('Error fetching avatar:', error);
       }
@@ -51,99 +90,19 @@ const UserNavBar: React.FC<Omit<UserNavBarProps, 'handleDelete'>> = ({
     }
   }, [username]);
 
-  // Helper to fetch character info by ID
-  const getCharFromId = async (id: number): Promise<{ name: string; image: string; details: string } | undefined> => {
-    const token = localStorage.getItem("jwtToken");
-    try {
-      const response = await fetch(`http://localhost:8080/admin/characters/${id}`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        return { name: data.charName, image: data.charImg, details: data.charDescription };
-      } else {
-        console.log("Character Not Found!");
-        return undefined;
-      }
-    } catch (error) {
-      console.error("Error fetching character info:", error);
-      return undefined;
-    }
-  };
-
-  const getUserIdFromToken = () => {
-    const token = localStorage.getItem("jwtToken");
-    if (!token) return null;
-    try {
-      const decoded = jwtDecode<{ userId: number }>(token);
-      return decoded.userId;
-    } catch {
-      return null;
-    }
-  };
-
   useEffect(() => {
-    const getUserChats = async () => {
-      const userId = getUserIdFromToken();
-      if (!userId) return;
-      const token = localStorage.getItem("jwtToken");
-      try {
-        const response = await fetch("http://localhost:8080/chat/getUserChats", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-          },
-          body: JSON.stringify({ userId }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          // For each chat, fetch character info
-          const promises = data.map(async (chatItem: any) => {
-            const character = await getCharFromId(chatItem.charId);
-            if (character) {
-              return {
-                name: character.name ?? "N/A",
-                image: character.image ?? "No Image",
-                details: character.details ?? "N/A",
-                chatId: chatItem.chatId,
-              };
-            }
-            return null;
-          });
-          const resolvedChats = await Promise.all(promises);
-          const chats = resolvedChats.filter(chat => chat !== null) as { name: string; image: string; details: string; chatId: number }[];
-          setUserChats(chats);
-        } else {
-          console.error("Failed to fetch user chats:", response.status);
-        }
-      } catch (error) {
-        console.error("Error fetching user chats:", error);
-      }
-    };
     getUserChats();
   }, []);
 
   // Delete handler that refreshes the chat list
   const handleDelete = async (chatId: number) => {
-    const token = localStorage.getItem("jwtToken");
     try {
-      const response = await fetch("http://localhost:8080/chat/deleteChat", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({ chatId }),
-      });
-      if (response.ok) {
-        // Refresh the chat list
-        (window as any).getUserChats();
+      const { error } = await supabase
+        .from("chats")
+        .delete()
+        .eq("chat_id", chatId);
+      if (!error) {
+        getUserChats();
       } else {
         alert("Failed to delete chat");
       }

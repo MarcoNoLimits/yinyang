@@ -1,79 +1,78 @@
 import { ArrowLeft } from "lucide-react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import Footer from "../Footer";
 import UserNavBar from "./UserNavBar";
 import { UserNavBarProps } from "./UserNavBar";
-import { jwtDecode } from "jwt-decode";
+import { supabase } from "../../config/supabaseClient";
 import { useEffect, useState } from "react";
 
-interface GridItem {
-  charImage: string;
-  charPersonality: string;
-  color: string;
+interface FilterPageProps {
+  chatList: { name: string; image: string; details: string }[];
+  handleDelete?: (buttonName: string) => void;
 }
 
-const FilterPage: React.FC<UserNavBarProps> = ({ chatList }) => {
-  const [categories, setCategories] = useState<GridItem[]>([]);
+const FilterPage: React.FC<FilterPageProps> = ({ chatList }) => {
+  const [categories, setCategories] = useState<any[]>([]);
+  const [username, setUsername] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchCategories = async () => {
+    const checkUserAndFetchCategories = async () => {
       try {
-        const response = await fetch(
-          "http://localhost:8080/auth/characters/personalities"
-        );
-        if (!response.ok) {
-          throw new Error("Network response was not ok");
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          navigate("/Login");
+          return;
         }
-        const data = await response.json();
 
-        const withColours = data.map((item: GridItem) => ({
-          title: item.charPersonality,
-          icon: item.charImage,
-          color: getRandomColor(), // Assign a random color
-        }));
-        setCategories(withColours);
-        
+        const authUser = session.user;
+        const role = authUser.user_metadata?.role || "user";
+        if (role !== "user") {
+          navigate("/Login");
+          return;
+        }
+
+        setUsername(authUser.user_metadata?.username || authUser.email || "User");
+
+        const { data, error } = await supabase
+          .from("characters")
+          .select("char_personality, char_img");
+        if (error) throw error;
+
+        if (data) {
+          const unique: any[] = [];
+          const seen = new Set();
+          for (const item of data) {
+            if (!seen.has(item.char_personality)) {
+              seen.add(item.char_personality);
+              unique.push(item);
+            }
+          }
+
+          const withColours = unique.map((item: any) => ({
+            title: item.char_personality,
+            icon: item.char_img,
+            color: getRandomColor(),
+          }));
+          setCategories(withColours);
+        }
       } catch (error) {
         console.error("Error fetching categories:", error);
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchCategories();
+    checkUserAndFetchCategories();
   }, []);
-  const navigate = useNavigate();
 
-  const token = localStorage.getItem("jwtToken");
-
-  // If no token, redirect to login
-  if (!token) {
-    return <Navigate to="/Login" replace />;
-  }
-
-  let username: string;
-  let userId: number;
-
-  // Decode token and handle potential errors
-  try {
-    const decoded: any = jwtDecode(token);
-    const roles = decoded.roles || [];
-
-    // Check if user has the "user" role
-    if (!roles.includes("user")) {
-      return <Navigate to="/Login" replace />;
-    }
-
-    username = decoded.sub; // Typically, 'sub' is the username or subject
-    userId = decoded.userId; // Assumes userId is included in the token
-
-    // If userId is not in the token, this will be undefined; handle accordingly if needed
-    if (userId === undefined) {
-      console.error("userId not found in token");
-      // Optionally redirect or set a default value
-      return <Navigate to="/Login" replace />;
-    }
-  } catch (error) {
-    console.error("Invalid token:", error);
-    return <Navigate to="/Login" replace />;
+  if (loading) {
+    return (
+      <div className="bg-[#212121] min-h-screen flex items-center justify-center text-white">
+        Loading...
+      </div>
+    );
   }
 
   return (

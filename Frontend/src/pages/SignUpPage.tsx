@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LoginNav from "../components/LoginNav";
+import { supabase } from "../config/supabaseClient";
 
 function SignupPage() {
   // Regular expression for validating email format.
@@ -47,25 +48,28 @@ function SignupPage() {
       return;
     }
 
-    // Proceed with signup logic (e.g., API call)
-    console.log("Form Data:", formData);
     try {
-      const response = await fetch("http://localhost:8080/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            first_name: formData.firstName,
+            surname: formData.surname,
+            username: formData.username,
+            role: "user",
+          },
+        },
       });
-      console.log(JSON.stringify(formData));
 
-      const data = await response.json();
-      if (response.ok) {
+      if (signUpError) {
+        setError(signUpError.message);
+      } else {
         setError("User registered successfully!");
         navigate("/login");
-      } else {
-        setError(`Error: ${data}`);
       }
-    } catch (error) {
-      setError("Failed to connect to server");
+    } catch (err: any) {
+      setError("Failed to connect to Supabase");
     }
   };
 

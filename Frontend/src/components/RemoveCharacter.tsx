@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { supabase } from "../config/supabaseClient";
 
 interface Character {
   charId: number;
@@ -12,7 +13,6 @@ interface Character {
 }
 
 const RemoveCharacter = () => {
-  const token = localStorage.getItem("jwtToken");
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -25,17 +25,25 @@ const RemoveCharacter = () => {
   useEffect(() => {
     const fetchCharacters = async () => {
       try {
-        const response = await fetch('http://localhost:8080/moderator/characters',{
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch characters');
+        const { data, error } = await supabase
+          .from("characters")
+          .select("*")
+          .order("char_id", { ascending: true });
+
+        if (error) throw error;
+
+        if (data) {
+          const mapped = data.map((item: any) => ({
+            charId: item.char_id,
+            charName: item.char_name,
+            charImg: item.char_img,
+            charDescription: item.char_description,
+            charPersonality: item.char_personality,
+            charPrompt: item.char_prompt,
+            charUsage: item.char_usage,
+          }));
+          setCharacters(mapped);
         }
-        const data = await response.json();
-        setCharacters(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred while fetching characters');
       } finally {
@@ -54,18 +62,12 @@ const RemoveCharacter = () => {
     setErrorMessage("");
 
     try {
-      const response = await fetch(`http://localhost:8080/moderator/characters/${selectedCharacter.charId}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const { error } = await supabase
+        .from("characters")
+        .delete()
+        .eq("char_id", selectedCharacter.charId);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to delete character');
-      }
+      if (error) throw error;
 
       // Update local state
       setCharacters(prevCharacters =>

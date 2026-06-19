@@ -46,9 +46,9 @@ const App: React.FC = () => {
     }
   };
 
-  const [user, setUser] = useState<{ username: string; userId: number }>({
+  const [user, setUser] = useState<{ username: string; userId: string | number }>({
     username: "",
-    userId: 1,
+    userId: "",
   });
 
   const [favourite, setFavourite] = useState<Character[]>([]);

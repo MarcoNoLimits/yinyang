@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import CharacterInfo from "./CharacterInfo";
 import { useCharacterContext } from "./CharacterContext";
 import { motion } from "framer-motion";
+import { supabase } from "../../config/supabaseClient";
 
 export interface Character {
   charImg: string;
@@ -20,7 +21,7 @@ interface CharacterGridProps {
     chatId: number
   ) => void;
   list: { name: string; image: string; details: string }[];
-  user: { username: string; userId: number };
+  user: { username: string; userId: string | number };
 }
 
 const CharacterGrid: React.FC<CharacterGridProps> = ({
@@ -119,16 +120,33 @@ const CharacterGrid: React.FC<CharacterGridProps> = ({
   }
 
   useEffect(() => {
-    fetch("http://localhost:8080/auth/characters/all") // Fetch from Spring Boot backend
-      .then((response) => response.json())
-      .then((data) => {
-        setCharacters(data);
-        setLoading(false);
-      })
-      .catch((error) => {
+    const fetchCharacters = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("characters")
+          .select("*")
+          .order("char_id", { ascending: true });
+
+        if (error) throw error;
+
+        if (data) {
+          const mapped = data.map((item: any) => ({
+            charId: item.char_id,
+            charName: item.char_name,
+            charImg: item.char_img,
+            charDescription: item.char_description,
+            charUsage: item.char_usage,
+          }));
+          setCharacters(mapped);
+        }
+      } catch (error) {
         console.error("Error fetching characters:", error);
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+
+    fetchCharacters();
     console.log("Start:" + page);
   }, []);
 
@@ -142,17 +160,13 @@ const CharacterGrid: React.FC<CharacterGridProps> = ({
 
   const handleUsageUpdate = async (character: Character) => {
     try {
-      await fetch("http://localhost:8080/auth/characters/update-usage", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          charName: character.charName,
-        }),
-      });
+      const { error } = await supabase
+        .from("characters")
+        .update({ char_usage: (character.charUsage || 0) + 1 })
+        .eq("char_id", character.charId);
+      if (error) throw error;
     } catch (error) {
-      console.log(error);
+      console.error("Error updating usage:", error);
     }
   };
 

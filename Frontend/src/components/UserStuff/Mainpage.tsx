@@ -10,7 +10,7 @@ interface MainPageProps {
   ) => void;
   chatList: { name: string; image: string; details: string }[];
   username: string;
-  userId: number;
+  userId: string | number;
 }
 
 const MainPage: React.FC<MainPageProps> = ({

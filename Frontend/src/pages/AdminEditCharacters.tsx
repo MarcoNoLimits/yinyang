@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import NavBar from '../components/NavBar';
 import SmallBoxesBox from '../components/AdminEditCharactersComponents/SmallBoxes Box';
 import { Navigate, useLocation } from 'react-router-dom';
+import { supabase } from '../config/supabaseClient';
 
 interface Character {
     img: string;
@@ -27,26 +28,23 @@ function AdminEditCharacters() {
     useEffect(() => {
         const fetchCharacters = async () => {
             try {
-                const response = await fetch('http://localhost:8080/admin/characters',{
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`,
-                    },
-                });
-                if (!response.ok) {
-                    throw new Error('Failed to fetch characters');
+                const { data, error } = await supabase
+                    .from("characters")
+                    .select("*")
+                    .order("char_id", { ascending: true });
+
+                if (error) throw error;
+
+                if (data) {
+                    const transformedData = data.map((char: any) => ({
+                        img: char.char_img || "https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/2acb7715797d4183b09fdbfb902ff52a0aa4e0cf-496x560.jpg?auto=format&fit=fill&q=80&w=352",
+                        name: char.char_name,
+                        Id: char.char_id,
+                        details: char.char_description,
+                        usage: char.char_usage,
+                    }));
+                    setCharacters(transformedData);
                 }
-                const data = await response.json();
-                // Transform the data to match the frontend structure
-                const transformedData = data.map((char: any) => ({
-                    img: char.charImg || "https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/2acb7715797d4183b09fdbfb902ff52a0aa4e0cf-496x560.jpg?auto=format&fit=fill&q=80&w=352",
-                    name: char.charName,
-                    Id: char.charId,
-                    details: char.charDescription,
-                    usage: char.charUsage
-                }));
-                setCharacters(transformedData);
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'An error occurred');
             } finally {

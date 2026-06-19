@@ -3,7 +3,7 @@ import UserCard from "./UserCard";
 import { motion } from "framer-motion";
 
 interface User {
-    userId: number;
+    userId: string | number;
     username: string;
     roles: string[];
     userImg?: string;
@@ -12,7 +12,7 @@ interface User {
 interface UsersSmallBoxesBoxProps {
     users: User[];
     moderator: boolean;
-    onRoleToggle: (userId: number) => void;
+    onRoleToggle: (userId: string | number) => void;
 }
 
 function UsersSmallBoxesBox({ users, moderator, onRoleToggle }: UsersSmallBoxesBoxProps) {

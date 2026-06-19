@@ -5,67 +5,82 @@ import UserNavBar, { UserNavBarProps } from "./UserNavBar";
 import { useEffect, useState } from "react";
 import CharacterInfo from "./CharacterInfo";
 import { useCharacterContext } from "./CharacterContext";
-import { jwtDecode } from "jwt-decode";
+import { supabase } from "../../config/supabaseClient";
 import { goToChat, mappingCharacterInfo } from "./constants";
 
-const FilterList: React.FC<UserNavBarProps> = ({ }) => {
-  const { user, chatList, addChat, favourite } = useCharacterContext();
+interface FilterListProps {
+  chatList: { name: string; image: string; details: string }[];
+  handleDelete?: (buttonName: string) => void;
+}
+
+const FilterList: React.FC<FilterListProps> = ({ }) => {
+  const { chatList, addChat, favourite } = useCharacterContext();
   const location = useLocation();
   const { icon, title, bgColor } = location.state;
 
   const navigate = useNavigate();
 
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [username, setUsername] = useState("");
+  const [userMetadata, setUserMetadata] = useState<any>(null);
 
   useEffect(() => {
-    const fetchCharacters = async () => {
+    const checkUserAndFetch = async () => {
       try {
-        const response = await fetch(`http://localhost:8080/auth/${title}`);
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          navigate("/Login");
+          return;
+        }
+        const authUser = session.user;
+        const role = authUser.user_metadata?.role || "user";
+        if (role !== "user") {
+          navigate("/Login");
+          return;
+        }
+        setUsername(authUser.user_metadata?.username || authUser.email || "User");
+        setUserMetadata({
+          username: authUser.user_metadata?.username || authUser.email || "User",
+          userId: authUser.id,
+        });
 
-        if (!response.ok) throw new Error("Failed to fetch characters");
+        const { data, error } = await supabase
+          .from("characters")
+          .select("*")
+          .eq("char_personality", title);
 
-        const data = await response.json();
-        setCharacters(data);
+        if (error) throw error;
+
+        if (data) {
+          const mapped = data.map((item: any) => ({
+            charId: item.char_id,
+            charName: item.char_name,
+            charImg: item.char_img,
+            charDescription: item.char_description,
+            charUsage: item.char_usage,
+            charPersonality: item.char_personality,
+            charPrompt: item.char_prompt,
+            charLiked: item.char_liked,
+          }));
+          setCharacters(mapped);
+        }
       } catch (error) {
-        console.error("Error fetching characters:", error);
+        console.error("Error in FilterList:", error);
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchCharacters();
+    checkUserAndFetch();
   }, [title]);
 
-  const token = localStorage.getItem("jwtToken");
-
-  // If no token, redirect to login
-  if (!token) {
-    return <Navigate to="/Login" replace />;
-  }
-
-  let username: string;
-  let userId: number;
-
-  // Decode token and handle potential errors
-  try {
-    const decoded: any = jwtDecode(token);
-    const roles = decoded.roles || [];
-
-    // Check if user has the "user" role
-    if (!roles.includes("user")) {
-      return <Navigate to="/Login" replace />;
-    }
-
-    username = decoded.sub; // Typically, 'sub' is the username or subject
-    userId = decoded.userId; // Assumes userId is included in the token
-
-    // If userId is not in the token, this will be undefined; handle accordingly if needed
-    if (userId === undefined) {
-      console.error("userId not found in token");
-      // Optionally redirect or set a default value
-      return <Navigate to="/Login" replace />;
-    }
-  } catch (error) {
-    console.error("Invalid token:", error);
-    return <Navigate to="/Login" replace />;
+  if (loading) {
+    return (
+      <div className="bg-[#212121] min-h-screen flex items-center justify-center text-white">
+        Loading...
+      </div>
+    );
   }
 
   const checkIfLiked = (character: Character) => {
@@ -120,7 +135,7 @@ const FilterList: React.FC<UserNavBarProps> = ({ }) => {
                     mappingCharacterInfo(character),
                     0,
                     addChat,
-                    user,
+                    userMetadata,
                     navigate,
                     chatList
                   )

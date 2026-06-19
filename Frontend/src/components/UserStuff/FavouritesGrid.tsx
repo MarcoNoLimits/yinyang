@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useCharacterContext } from "./CharacterContext";
-
 import { motion } from "framer-motion";
 import CharacterInfo from "./CharacterInfo";
 import { goToChat, mappingCharacterInfo } from "./constants";
 import { useNavigate } from "react-router-dom";
+import { supabase } from "../../config/supabaseClient";
+import { Character } from "./CharacterGrid";
 
 const FavouritesGrid = () => {
   const { favourite, setFavourite, user, refreshFav, chatList, addChat } =
@@ -12,21 +13,48 @@ const FavouritesGrid = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!user?.username) return;
-    fetch(`http://localhost:8080/auth/favourites/user/${user.username}`, {
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem("jwtToken")}`,
-      },
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`);
+    const fetchFavourites = async () => {
+      if (!user?.userId) return;
+      try {
+        const { data, error } = await supabase
+          .from("favourites")
+          .select(`
+            character_id,
+            characters (
+              char_id,
+              char_name,
+              char_img,
+              char_description,
+              char_usage
+            )
+          `)
+          .eq("user_id", user.userId);
+
+        if (error) throw error;
+
+        if (data) {
+          const favs = data
+            .map((item: any) => {
+              const char = item.characters;
+              if (!char) return null;
+              return {
+                charId: char.char_id,
+                charName: char.char_name,
+                charImg: char.char_img,
+                charDescription: char.char_description,
+                charUsage: char.char_usage,
+              };
+            })
+            .filter(Boolean) as Character[];
+          setFavourite(favs);
         }
-        return response.json();
-      })
-      .then((data) => setFavourite(data))
-      .catch((error) => console.error("Error fetching favourites:", error));
-  }, [user.username, refreshFav]);
+      } catch (error) {
+        console.error("Error fetching favourites:", error);
+      }
+    };
+
+    fetchFavourites();
+  }, [user.userId, refreshFav]);
 
   useEffect(() => {
     if (favourite.length <= numPerPage) {

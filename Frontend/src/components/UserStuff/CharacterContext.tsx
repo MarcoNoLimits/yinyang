@@ -3,7 +3,7 @@ import { Character } from "./CharacterGrid";
 
 
 export interface CharacterContextType {
-  user: { username: string; userId: number };
+  user: { username: string; userId: string | number };
   chatList: { name: string; image: string; details: string }[];
   addChat: (
     name: string,

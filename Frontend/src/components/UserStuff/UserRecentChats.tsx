@@ -19,7 +19,7 @@ const UserRecentChats = ({
   handleDelete: (chatId: number) => void;
   name: string;
   user_image: string;
-  user?: { userId: number };
+  user?: { userId: string | number };
   updateActive: (character: any, newChatId: number) => void;
 }) => {
   const [isOpen, setIsOpen] = useState(false);

@@ -3,6 +3,7 @@ import { Filter, Search } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Character } from "./CharacterGrid";
 import { useCharacterContext } from "./CharacterContext";
+import { supabase } from "../../config/supabaseClient";
 
 const UserSearchBar = () => {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -21,18 +22,35 @@ const UserSearchBar = () => {
     setInputValue(e.target.value);
 
   useEffect(() => {
-    if (inputValue.trim().length > 0) {
-      fetch(`http://localhost:8080/auth/characters/search?name=${inputValue}`)
-        .then((response) => response.json())
-        .then((data) => {
-          setCharacters(data);
-        })
-        .catch((error) => {
+    const searchCharacters = async () => {
+      if (inputValue.trim().length > 0) {
+        try {
+          const { data, error } = await supabase
+            .from("characters")
+            .select("*")
+            .ilike("char_name", `%${inputValue}%`);
+
+          if (error) throw error;
+
+          if (data) {
+            const mapped = data.map((item: any) => ({
+              charId: item.char_id,
+              charName: item.char_name,
+              charImg: item.char_img,
+              charDescription: item.char_description,
+              charUsage: item.char_usage,
+            }));
+            setCharacters(mapped);
+          }
+        } catch (error) {
           console.error("Error fetching characters:", error);
-        });
-    } else {
-      setCharacters([]); // Clear results when query is empty
-    }
+        }
+      } else {
+        setCharacters([]); // Clear results when query is empty
+      }
+    };
+
+    searchCharacters();
   }, [inputValue]);
 
   const mappingCharacterInfo = (character: Character) => {

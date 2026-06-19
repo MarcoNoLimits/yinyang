@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { supabase } from "../../config/supabaseClient";
 import {
   BarChart,
   Bar,
@@ -16,49 +17,73 @@ import {
 function CharactersBarGraph() {
   const [characterUsage, setCharacterUsage] = useState<{ [key: string]: number }>({});
   const [characterPersonality, setCharacterPersonality] = useState<{ [key: string]: number }>({});
-  const [userCount, setUserCount] = useState<Array<{ year: number, count: number }>>([]);
+  const [userCount, setUserCount] = useState<Array<{ year: number | string, count: number }>>([]);
   const colors = ["#ffa500", "#dc143c", "#4682b4", "#301934", "#b06239"];
 
   useEffect(() => {
-    const token = localStorage.getItem("jwtToken");
-
-    // Check if token exists; optionally redirect if not authenticated
-    if (!token) {
-      console.error("No token found, authentication required");
-      return; // You could redirect here if using React Router
-    }
-
-    // Common headers with Authorization token
-    const headers = {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
+    const fetchUsage = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("characters")
+          .select("char_name, char_usage");
+        if (error) throw error;
+        if (data) {
+          const usageObj = data.reduce((acc: any, curr: any) => {
+            acc[curr.char_name] = curr.char_usage;
+            return acc;
+          }, {});
+          setCharacterUsage(usageObj);
+        }
+      } catch (err) {
+        console.error("Error fetching character usage:", err);
+      }
     };
-    // Fetch character usage data
-    fetch('http://localhost:8080/admin/characters/usage',{
-      method: 'GET',
-      headers: headers,
-    })
-      .then(response => response.json())
-      .then(data => setCharacterUsage(data));
 
-    // Fetch character personality data
-    fetch('http://localhost:8080/admin/characters/personality',{
-      method: 'GET',
-      headers: headers,
-    })
-      .then(response => response.json())
-      .then(data => setCharacterPersonality(data));
+    const fetchPersonality = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("characters")
+          .select("char_personality");
+        if (error) throw error;
+        if (data) {
+          const personalityObj = data.reduce((acc: any, curr: any) => {
+            const personality = curr.char_personality;
+            acc[personality] = (acc[personality] || 0) + 1;
+            return acc;
+          }, {});
+          setCharacterPersonality(personalityObj);
+        }
+      } catch (err) {
+        console.error("Error fetching character personality:", err);
+      }
+    };
 
-    // Fetch user count by year
-    fetch('http://localhost:8080/admin/users/yearly',{
-      method: 'GET',
-      headers: headers,
-    })
-      .then(response => response.json())
-      .then(data => {
-        // Data is already in the correct format from backend
-        setUserCount(data);
-      });
+    const fetchYearlyUsers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("users")
+          .select("join_date");
+        if (error) throw error;
+        if (data) {
+          const yearCountMap = data.reduce((acc: any, curr: any) => {
+            const year = curr.join_date ? new Date(curr.join_date).getFullYear() : 2026;
+            acc[year] = (acc[year] || 0) + 1;
+            return acc;
+          }, {});
+          const yearlyArr = Object.entries(yearCountMap).map(([year, count]) => ({
+            year: parseInt(year, 10),
+            count: count as number,
+          })).sort((a, b) => (a.year as number) - (b.year as number));
+          setUserCount(yearlyArr);
+        }
+      } catch (err) {
+        console.error("Error fetching yearly users:", err);
+      }
+    };
+
+    fetchUsage();
+    fetchPersonality();
+    fetchYearlyUsers();
   }, []);
 
   // Format data for pie chart (character usage)

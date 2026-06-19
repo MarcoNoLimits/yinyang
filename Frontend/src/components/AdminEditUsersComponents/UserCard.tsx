@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 interface UserCardProps {
     img: string;
     name: string;
-    Id: number;
+    Id: string | number;
     role: boolean;
     onRoleToggle: () => void;
 }

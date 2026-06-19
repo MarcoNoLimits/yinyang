@@ -7,6 +7,7 @@ import ProfileImage from "../profileimg";
 import { useCharacterContext } from "./CharacterContext";
 import NavigationTabs from "./NavigationsTab";
 import EditFields, { User } from "./EditFields";
+import { supabase } from "../../config/supabaseClient";
 
 const Profile = () => {
   const location = useLocation();
@@ -57,36 +58,42 @@ const Profile = () => {
     setErrorMessage("");
 
     try {
-      const formData = new FormData();
-      formData.append("file", newImage);
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) throw new Error("Not authenticated");
 
-      const uploadResponse = await fetch(
-        "http://localhost:8080/api/upload/profile",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: formData,
-        }
-      );
+      const fileExt = newImage.name.split(".").pop();
+      const fileName = `${authUser.id}-${Math.random()}.${fileExt}`;
+      const filePath = `avatars/${fileName}`;
 
-      if (!uploadResponse.ok) {
-        throw new Error("Failed to upload image");
+      const { error: uploadError } = await supabase.storage
+        .from("profiles")
+        .upload(filePath, newImage, { upsert: true });
+
+      if (uploadError) {
+        throw uploadError;
       }
 
-      const uploadResult = await uploadResponse.json();
-      const imageUrl = uploadResult.url;
+      const { data: { publicUrl } } = supabase.storage
+        .from("profiles")
+        .getPublicUrl(filePath);
 
-      setAvatar(imageUrl);
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({ user_img: publicUrl })
+        .eq("user_id", authUser.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setAvatar(publicUrl);
       setIsSuccess(true);
       setTimeout(() => setIsSuccess(false), 2000);
-    } catch (error) {
+      setNewImage(null);
+    } catch (error: any) {
       console.error("Error:", error);
       setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "An error occurred while uploading the image"
+        error.message || "An error occurred while uploading the image"
       );
       setIsError(true);
     } finally {

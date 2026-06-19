@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { personalityTraits } from "./personalityTraits";
+import { supabase } from "../config/supabaseClient";
 
 interface Character {
   charId: number;
@@ -33,19 +34,24 @@ const EditCharacter = () => {
   useEffect(() => {
     const fetchCharacters = async () => {
       try {
-        const response = await fetch('http://localhost:8080/moderator/characters', {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        if (!response.ok) {
-          throw new Error('Failed to fetch characters');
+        const { data, error } = await supabase
+          .from("characters")
+          .select("*");
+        if (error) throw error;
+        if (data) {
+          const mapped = data.map((item: any) => ({
+            charId: item.char_id,
+            charName: item.char_name,
+            charImg: item.char_img,
+            charDescription: item.char_description,
+            charPersonality: item.char_personality,
+            charPrompt: item.char_prompt,
+            charUsage: item.char_usage,
+          }));
+          setCharacters(mapped);
         }
-        const data = await response.json();
-        setCharacters(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred while fetching characters');
+      } catch (err: any) {
+        setError(err.message || 'An error occurred while fetching characters');
       } finally {
         setIsLoading(false);
       }
@@ -113,75 +119,66 @@ const EditCharacter = () => {
     setErrorMessage("");
 
     try {
-      let imageUrl = selectedCharacter.charImg; // Keep existing image if no new image selected
+      let imageUrl = selectedCharacter.charImg;
 
       if (newImage) {
-        // First upload the image to Cloudinary
-        const formData = new FormData();
-        formData.append('file', newImage);
+        const fileExt = newImage.name.split(".").pop();
+        const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
+        const filePath = `characters/${fileName}`;
 
-        const uploadResponse = await fetch('http://localhost:8080/api/upload/character', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          body: formData
-        });
+        const { error: uploadError } = await supabase.storage
+          .from("profiles")
+          .upload(filePath, newImage, { upsert: true });
 
-        if (!uploadResponse.ok) {
-          throw new Error('Failed to upload image');
-        }
+        if (uploadError) throw uploadError;
 
-        const uploadResult = await uploadResponse.json();
-        imageUrl = uploadResult.url;
+        const { data: { publicUrl } } = supabase.storage
+          .from("profiles")
+          .getPublicUrl(filePath);
+
+        imageUrl = publicUrl;
       }
 
-      // Now update the character with the new image URL
-      const updatedCharacter = {
-        ...selectedCharacter,
-        charName: newName || selectedCharacter.charName,
-        charImg: imageUrl,
-        charDescription: newDescription || selectedCharacter.charDescription,
-        charPersonality: newCharacteristics || selectedCharacter.charPersonality,
-        charPrompt: `I want you to respond to my prompts considering that you are the character ${newName || selectedCharacter.charName} with the following description ${newDescription || selectedCharacter.charDescription}. Your responses should also be ${newCharacteristics || selectedCharacter.charPersonality} towards me. Okay?`
-      };
+      const updatedName = newName || selectedCharacter.charName;
+      const updatedDescription = newDescription || selectedCharacter.charDescription;
+      const updatedPersonality = newCharacteristics || selectedCharacter.charPersonality;
 
-      const response = await fetch(`http://localhost:8080/moderator/characters/${selectedCharacter.charId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(updatedCharacter)
-      });
+      const { error: updateError } = await supabase
+        .from("characters")
+        .update({
+          char_name: updatedName,
+          char_img: imageUrl,
+          char_description: updatedDescription,
+          char_personality: updatedPersonality,
+          char_prompt: `I want you to respond to my prompts considering that you are the character ${updatedName} with the following description ${updatedDescription}. Your responses should also be ${updatedPersonality} towards me. Okay?`
+        })
+        .eq("char_id", selectedCharacter.charId);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update character');
-      }
-
-      // Update local state
-      setCharacters(prevCharacters =>
-        prevCharacters.map(char =>
-          char.charId === selectedCharacter.charId ? updatedCharacter : char
-        )
-      );
+      if (updateError) throw updateError;
 
       setIsSuccess(true);
       setTimeout(() => setIsSuccess(false), 2000);
       setIsPopupOpen(false);
-      setSelectedCharacter(null);
-      setNewName("");
-      setNewImage(null);
-      setImagePreview("");
-      setNewDescription("");
-      setNewCharacteristics("");
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+
+      // Refresh characters list
+      const { data: refreshData, error: refreshError } = await supabase
+        .from("characters")
+        .select("*");
+      if (!refreshError && refreshData) {
+        const mapped = refreshData.map((item: any) => ({
+          charId: item.char_id,
+          charName: item.char_name,
+          charImg: item.char_img,
+          charDescription: item.char_description,
+          charPersonality: item.char_personality,
+          charPrompt: item.char_prompt,
+          charUsage: item.char_usage,
+        }));
+        setCharacters(mapped);
       }
-    } catch (error) {
-      console.error('Error:', error);
-      setErrorMessage(error instanceof Error ? error.message : 'An error occurred while updating the character');
+    } catch (err: any) {
+      console.error(err);
+      setErrorMessage(err.message || 'Failed to update character');
       setIsError(true);
     } finally {
       setIsLoading(false);

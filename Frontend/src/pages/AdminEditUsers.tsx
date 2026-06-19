@@ -2,9 +2,10 @@ import { useState, useEffect } from "react";
 import NavBar from "../components/NavBar";
 import UsersSmallBoxesBox from "../components/AdminEditUsersComponents/UsersSmallBoxes_Box";
 import { Navigate, useLocation } from "react-router-dom";
+import { supabase } from "../config/supabaseClient";
 
 interface User {
-    userId: number;
+    userId: string | number;
     username: string;
     roles: string[];
     userImg?: string;
@@ -29,30 +30,23 @@ function AdminEditUsers()
     }, []);
 
     const fetchUsers = async () => {
-        const token = localStorage.getItem("jwtToken");
-        
-        if (!token) {
-            console.error('No JWT token found, redirecting to login...');
-            setError('Unauthorized access. Please log in again.');
-            window.location.href = '/login';
-            return;
-        }
-    
         try {
-            const response = await fetch('http://localhost:8080/admin/users', {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-    
-            if (!response.ok) {
-                throw new Error(`Failed to fetch users: ${response.status}`);
+            const { data, error } = await supabase
+                .from("users")
+                .select("user_id, username, role, user_img")
+                .order("username", { ascending: true });
+
+            if (error) throw error;
+
+            if (data) {
+                const transformedData = data.map((user: any) => ({
+                    userId: user.user_id,
+                    username: user.username,
+                    roles: [user.role],
+                    userImg: user.user_img || "https://www.freeiconspng.com/uploads/computer-user-icon-28.png",
+                }));
+                setUsers(transformedData);
             }
-    
-            const data = await response.json();
-            console.log('Raw user data from backend:', JSON.stringify(data, null, 2));
-            setUsers(data);
         } catch (err) {
             setError('Failed to fetch users');
             console.error('Error fetching users:', err);
@@ -72,33 +66,22 @@ function AdminEditUsers()
         setToggleModerator(false);
     }
 
-    const handleRoleToggle = async (userId: number) => {
+    const handleRoleToggle = async (userId: string | number) => {
         try {
-            const token = localStorage.getItem("jwtToken");
-            if (!token) {
-                console.error('No token found');
-                return;
-            }
-
             console.log('Toggling role for user:', userId); // Debug log
-            const response = await fetch(`http://localhost:8080/admin/users/${userId}/toggle-role`, {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-            });
-            
-            if (response.status === 401) {
-                console.error('Unauthorized - Please log in again');
-                return;
-            }
+            const userToToggle = users.find(u => u.userId === userId);
+            if (!userToToggle) return;
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Failed to toggle user role: ${errorText}`);
-            }
-            
+            const currentRole = userToToggle.roles[0];
+            const newRole = currentRole === "moderator" ? "user" : "moderator";
+
+            const { error } = await supabase
+                .from("users")
+                .update({ role: newRole })
+                .eq("user_id", userId);
+
+            if (error) throw error;
+
             console.log('Role toggled successfully'); // Debug log
             await fetchUsers(); // Refresh the user list
         } catch (err) {

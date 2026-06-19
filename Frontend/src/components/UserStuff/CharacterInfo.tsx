@@ -3,6 +3,7 @@ import { Heart } from "lucide-react";
 import { MessageCircle } from "lucide-react";
 import { Character } from "./CharacterGrid";
 import { useCharacterContext } from "./CharacterContext";
+import { supabase } from "../../config/supabaseClient";
 
 function truncateText(text: string, maxCharsPerLine = 13, maxLines = 3) {
   const maxTotalChars = maxCharsPerLine * maxLines; // 10 * 3 = 30 characters max
@@ -10,45 +11,20 @@ function truncateText(text: string, maxCharsPerLine = 13, maxLines = 3) {
     ? text.slice(0, maxTotalChars) + "..."
     : text;
 }
-interface FavouriteRequest {
-  userName: string;
-  charName: string;
-}
-const unlikeCharacter = async (data: FavouriteRequest) => {
-  const response = await fetch("http://localhost:8080/auth/favourites/unlike", {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  });
-  
-  if (!response.ok) throw new Error("Failed to unlike character");
-  return await response.text();
+const unlikeCharacter = async (userId: string | number, charId: number) => {
+  const { error } = await supabase
+    .from("favourites")
+    .delete()
+    .eq("user_id", userId)
+    .eq("character_id", charId);
+  if (error) throw error;
 };
 
-
-const likeCharacter = async (data: FavouriteRequest) => {
-  try {
-    const response = await fetch("http://localhost:8080/auth/favourites/like", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
-    });
-    console.log(JSON.stringify(data));
-
-    if (!response.ok) {
-      throw new Error(`Failed to like character. Status: ${response.status}`);
-    }
-
-    const result = await response.text(); // or `.json()` depending on your backend
-    return result;
-  } catch (error) {
-    console.error("Error liking character:", error);
-    throw error;
-  }
+const likeCharacter = async (userId: string | number, charId: number) => {
+  const { error } = await supabase
+    .from("favourites")
+    .insert({ user_id: userId, character_id: charId });
+  if (error) throw error;
 };
 
 const CharacterInfo = ({
@@ -70,21 +46,17 @@ const CharacterInfo = ({
   
 
   const toggleLike = async () => {
-    const data: FavouriteRequest = {
-      userName: user.username,
-      charName: character.charName,
-    };
-  
+    if (!user?.userId) return;
     try {
       if (!isLiked) {
-        await likeCharacter(data);
+        await likeCharacter(user.userId, character.charId);
         setIsLiked(true);
   
         // ✅ Add character to global favourite array
         setFavourite((prev) => [...prev, character]);
   
       } else {
-        await unlikeCharacter(data);
+        await unlikeCharacter(user.userId, character.charId);
         setIsLiked(false);
   
         // ✅ Remove character from global favourite array
@@ -92,9 +64,6 @@ const CharacterInfo = ({
           prev.filter((favChar) => favChar.charName !== character.charName)
         );
       }
-  
-      // Optional: toggleRefreshFav(); // if you still want to trigger refetch elsewhere
-      // toggleRefreshFav();
   
     } catch (error) {
       console.error("Error toggling like:", error);

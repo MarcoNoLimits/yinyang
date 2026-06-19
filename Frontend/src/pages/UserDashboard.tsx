@@ -1,9 +1,9 @@
 import Footer from "../components/Footer";
 import UserNavBar from "../components/UserStuff/UserNavBar";
 import { useNavigate } from "react-router-dom";
-import { jwtDecode } from "jwt-decode";
 import { useEffect } from "react";
 import MainPage from "../components/UserStuff/Mainpage";
+import { supabase } from "../config/supabaseClient";
 
 interface UserCharacterSelectionProps {
   chatList: { name: string; image: string; details: string }[];
@@ -16,10 +16,10 @@ interface UserCharacterSelectionProps {
   setUser: React.Dispatch<
     React.SetStateAction<{
       username: string;
-      userId: number;
+      userId: string | number;
     }>
   >;
-  user: { username: string; userId: number };
+  user: { username: string; userId: string | number };
 }
 
 
@@ -33,49 +33,48 @@ const UserCharacterSelection = ({
 
   const navigate = useNavigate();
 
-
-
-  // If no token, redirect to login
+  // Check user session on mount
   useEffect(() => {
-    const token = localStorage.getItem("jwtToken");
-    if (!token) {
-      navigate("/Login");
-      return;
-    }
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          navigate("/Login");
+          return;
+        }
 
-    let userId: number;
+        // Fetch user profile data from public.users table
+        const { data: profile, error: profileError } = await supabase
+          .from("users")
+          .select("username, user_id, role")
+          .eq("user_id", session.user.id)
+          .single();
 
-    // Decode token and handle potential errors
-    try {
-      const decoded: any = jwtDecode(token);
-      const roles = decoded.roles || [];
+        if (profileError || !profile) {
+          console.error("Profile not found:", profileError);
+          navigate("/Login");
+          return;
+        }
 
-      // Check if user has the "user" role
-      if (!roles.includes("user")) {
+        // Check if user has the "user" role (or other allowed roles)
+        if (profile.role !== "user" && profile.role !== "admin" && profile.role !== "moderator") {
+          navigate("/Login");
+          return;
+        }
+
+        setUser({
+          username: profile.username,
+          userId: profile.user_id,
+        });
+
+      } catch (err) {
+        console.error("Error checking session:", err);
         navigate("/Login");
-        return;
       }
+    };
 
-      userId = decoded.userId; // Assumes userId is included in the token
-
-      setUser({
-        username: decoded.sub,
-        userId: decoded.userId,
-      });
-
-      // If userId is not in the token, this will be undefined; handle accordingly if needed
-      if (userId === undefined) {
-        console.error("userId not found in token");
-        // Optionally redirect or set a default value
-        navigate("/Login");
-        return;
-      }
-    } catch (error) {
-      console.error("Invalid token:", error);
-      navigate("/Login");
-      return;
-    }
-  }, []);
+    checkSession();
+  }, [navigate, setUser]);
 
 
 
@@ -85,7 +84,6 @@ const UserCharacterSelection = ({
       <UserNavBar
         username={user.username}
         chatList={chatList}
-        handleDelete={handleDelete}
       />
       <MainPage
         addChat={addChat}
