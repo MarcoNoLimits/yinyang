@@ -140,8 +140,11 @@ function Login() {
                   const guestPassword = "Guest123!";
 
                   try {
-                    // Sign up the guest user in Supabase with metadata
-                    const { error: signUpError } = await supabase.auth.signUp({
+                    let signInData = null;
+                    let useFallback = false;
+
+                    // 1. Try to sign up a unique guest user
+                    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
                       email: guestEmail,
                       password: guestPassword,
                       options: {
@@ -155,18 +158,39 @@ function Login() {
                     });
 
                     if (signUpError) {
-                      setError(signUpError.message);
-                      return;
+                      console.warn("Guest signup failed, falling back to shared guest account:", signUpError.message);
+                      useFallback = true;
+                    } else {
+                      // Sign in the new guest user
+                      const { data: sinData, error: signInError } = await supabase.auth.signInWithPassword({
+                        email: guestEmail,
+                        password: guestPassword,
+                      });
+
+                      if (signInError) {
+                        console.warn("Sign in for new guest failed, falling back to shared guest account:", signInError.message);
+                        useFallback = true;
+                      } else {
+                        signInData = sinData;
+                      }
                     }
 
-                    // Sign in the guest user
-                    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-                      email: guestEmail,
-                      password: guestPassword,
-                    });
+                    // 2. If unique signup/signin failed (e.g. rate limit), use pre-seeded shared guest account
+                    if (useFallback) {
+                      const { data: fallbackData, error: fallbackError } = await supabase.auth.signInWithPassword({
+                        email: "logical_wallaby@guest.com",
+                        password: "asd",
+                      });
 
-                    if (signInError) {
-                      setError(signInError.message);
+                      if (fallbackError) {
+                        setError(`Guest login failed: ${fallbackError.message}`);
+                        return;
+                      }
+                      signInData = fallbackData;
+                    }
+
+                    if (!signInData) {
+                      setError("Failed to obtain guest session.");
                       return;
                     }
 
@@ -188,7 +212,7 @@ function Login() {
                       return;
                     }
 
-                    setError("User registered successfully!");
+                    setError("Logged in as guest successfully!");
                     await new Promise((resolve) => setTimeout(resolve, 1000));
                     navigate("/", { state: { username: profile.username } });
                   } catch (error) {
