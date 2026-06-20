@@ -19,6 +19,7 @@ DROP TABLE IF EXISTS yinyang.chats CASCADE;
 DROP TABLE IF EXISTS yinyang.favourites CASCADE;
 DROP TABLE IF EXISTS yinyang.characters CASCADE;
 DROP TABLE IF EXISTS yinyang.users CASCADE;
+DROP TABLE IF EXISTS yinyang.session_chat_history CASCADE;
 
 -- 5. Create Users profile table in yinyang schema (linked to auth.users)
 CREATE TABLE yinyang.users (
@@ -99,3 +100,83 @@ VALUES
 ('Garen', 'Aggressive', 'https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/2acb7715797d4183b09fdbfb902ff52a0aa4e0cf-496x560.jpg?auto=format&fit=fill&q=80&w=352', 'Garen: Spin, ult, repeat. Garen players enjoy the simple things: free health, easy damage, and a point-and-click kill button. If you main Garen, you''ve clearly opted for minimal effort, maximum reward.', 12, 'I want you to respond to my prompts considering that you are the character Garen from League of Legends. Your responses should also be aggressive towards me. Okay?'),
 ('Darius', 'Aggressive', 'https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/f606418621ccec569ab1ec87e1084dfd8e45e5f1-496x560.jpg?auto=format&fit=fill&q=80&w=352', 'Darius: Five stacks, dunk, dominate. Darius players live for the stat-check, reveling in the easy kills and lane dominance. If you play Darius, you enjoy the feeling of being an unstoppable force, even if it requires minimal skill.', 8, 'I want you to respond to my prompts considering that you are the character Darius from League of Legends. Your responses should also be aggressive towards me. Okay?'),
 ('Ahri', 'Friendly', 'https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/55e7e901b1f69d72804665cfbeb1f4f59c8fa877-496x560.jpg?auto=format&fit=fill&q=80&w=352', 'Ahri, the nine-tailed ''fox.'' All they do is spam charm and run away. Zero skill, all kiting. Every Ahri player thinks they''re a god, but they''re just abusing mobility. Go back to your anime.', 4, 'I want you to respond to my prompts considering that you are the character Ahri from League of Legends. Your responses should also be friendly to me. Okay?');
+
+-- 13. Enable pgvector and uuid-ossp extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "vector";
+
+-- 14. Create Universes Table
+CREATE TABLE IF NOT EXISTS yinyang.universes (
+    universe_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 15. Create Lorebook Entries Table
+CREATE TABLE IF NOT EXISTS yinyang.lorebook_entries (
+    entry_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    universe_id UUID NOT NULL REFERENCES yinyang.universes(universe_id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    keywords VARCHAR(255)[] NOT NULL,
+    content TEXT NOT NULL,
+    embedding VECTOR(1536),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_lorebook_keywords ON yinyang.lorebook_entries USING gin(keywords);
+CREATE INDEX IF NOT EXISTS idx_lorebook_embedding ON yinyang.lorebook_entries USING hnsw (embedding vector_cosine_ops);
+
+-- 16. Create Entities Table (PNJs, Items, Locations)
+CREATE TABLE IF NOT EXISTS yinyang.entities (
+    entity_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    universe_id UUID NOT NULL REFERENCES yinyang.universes(universe_id) ON DELETE CASCADE,
+    entity_type VARCHAR(50) NOT NULL, -- 'NPC', 'ITEM', 'LOCATION', 'FACTION'
+    name VARCHAR(255) NOT NULL,
+    properties JSONB NOT NULL DEFAULT '{}'::jsonb,
+    current_location_id UUID REFERENCES yinyang.entities(entity_id) ON DELETE SET NULL,
+    is_alive BOOLEAN DEFAULT TRUE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_universe_entity_name UNIQUE(universe_id, name)
+);
+
+-- 17. Create Sessions Table (mapping dynamic state)
+CREATE TABLE IF NOT EXISTS yinyang.sessions (
+    session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    universe_id UUID NOT NULL REFERENCES yinyang.universes(universe_id) ON DELETE CASCADE,
+    current_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 18. Create Timeline Events Table (factual records)
+CREATE TABLE IF NOT EXISTS yinyang.timeline_events (
+    event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    universe_id UUID NOT NULL REFERENCES yinyang.universes(universe_id) ON DELETE CASCADE,
+    session_id UUID REFERENCES yinyang.sessions(session_id) ON DELETE SET NULL,
+    event_summary TEXT NOT NULL,
+    state_delta JSONB NOT NULL DEFAULT '{}'::jsonb,
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_timeline_universe_time ON yinyang.timeline_events(universe_id, timestamp DESC);
+
+-- 18b. Create Session Chat History Table (for PostgreSQL-only caching)
+CREATE TABLE IF NOT EXISTS yinyang.session_chat_history (
+    id SERIAL PRIMARY KEY,
+    session_id UUID NOT NULL REFERENCES yinyang.sessions(session_id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_session_chat_history_session ON yinyang.session_chat_history(session_id, created_at ASC);
+
+-- 19. Seed a Default Universe
+INSERT INTO yinyang.universes (universe_id, name, description)
+VALUES ('00000000-0000-0000-0000-000000000001', 'League of Legends Runeterra', 'The fantasy universe of Runeterra, including Demacia, Noxus, Ionia, and other factions.')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
+
+-- 20. Seed some initial Lorebook entries
+INSERT INTO yinyang.lorebook_entries (universe_id, title, keywords, content)
+VALUES
+('00000000-0000-0000-0000-000000000001', 'Demacian Steel', ARRAY['garen', 'demacia', 'steel', 'petricite', 'armor'], 'Demacian steel is forged using special alloys and petricite, making it highly resistant to magic and spellcasting.'),
+('00000000-0000-0000-0000-000000000001', 'Noxian Border', ARRAY['darius', 'noxus', 'border', 'military'], 'The Noxian border is heavily fortified, guarded by warbands led by figures like Darius, the Hand of Noxus.')
+ON CONFLICT DO NOTHING;
