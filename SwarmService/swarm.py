@@ -76,7 +76,7 @@ def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
     """Weaver Node: Assembles historical timeline, chat logs, and lore into a prompt."""
     logger.info("Running Weaver Node...")
     session_id = state["session_id"]
-    universe_id = state.get("universe_id", "00000000-0000-0000-0000-000000000001")
+    universe_id = state.get("universe_id", "f0000000-0000-0000-0000-000000000001")
     
     # 1. Fetch rolling chat history from Redis
     history = get_chat_history(session_id, limit=6)
@@ -84,8 +84,19 @@ def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
     
     # 2. Fetch timeline history context from Postgres
     timeline_events = get_timeline_history(universe_id, limit=5)
-    timeline_str = "\n".join([f"- {evt['event_summary']}" for evt in timeline_events])
-    if not timeline_str:
+    db_timeline_str = "\n".join([f"- {evt['event_summary']}" for evt in timeline_events])
+
+    # Preserve any timeline_context injected via the API payload (e.g., by verify_swarm.py
+    # or the frontend). This is critical for continuity checks — the Critic must see
+    # injected context such as NPC death/MIA status.
+    injected_context = state.get("timeline_context", "") or ""
+    if db_timeline_str and injected_context:
+        timeline_str = f"{injected_context}\n\n[WORLD TIMELINE]\n{db_timeline_str}"
+    elif db_timeline_str:
+        timeline_str = db_timeline_str
+    elif injected_context:
+        timeline_str = injected_context
+    else:
         timeline_str = "No events recorded in the timeline yet."
         
     # 3. Format lore
@@ -126,7 +137,7 @@ def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
 def run_narrative_director(state: SwarmState) -> Dict[str, Any]:
     """Director Node: Simulates scene action and handles dynamic item/NPC generation (Forge)."""
     logger.info("Running Narrative Director Node...")
-    universe_id = state.get("universe_id", "00000000-0000-0000-0000-000000000001")
+    universe_id = state.get("universe_id", "f0000000-0000-0000-0000-000000000001")
     master_prompt = state["master_prompt"]
     
     # If this is a critic retry, inject critic feedback
@@ -201,7 +212,7 @@ def run_persona_emulator(state: SwarmState) -> Dict[str, Any]:
         return {"final_dialogue": dialogue}
         
     # If no companion character is provided, check if an NPC is speaking in the Director's output
-    universe_id = state.get("universe_id", "00000000-0000-0000-0000-000000000001")
+    universe_id = state.get("universe_id", "f0000000-0000-0000-0000-000000000001")
     npcs = get_entities_by_type(universe_id, "NPC")
     
     prose_lower = outcome.lower()
@@ -247,7 +258,7 @@ def run_event_chronicler(state: SwarmState) -> Dict[str, Any]:
 def run_ledger_guard(state: SwarmState) -> Dict[str, Any]:
     """Ledger Guard Node: Coordinates DB commits under PostgreSQL Advisory Lock."""
     logger.info("Running Ledger Guard Node...")
-    universe_id = state.get("universe_id", "00000000-0000-0000-0000-000000000001")
+    universe_id = state.get("universe_id", "f0000000-0000-0000-0000-000000000001")
     session_id = state["session_id"]
     summary = state["extracted_summary"]
     deltas = state["state_deltas"]

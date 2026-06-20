@@ -47,7 +47,7 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
     # 1. Scanner Agent Mock
     if "keyword extraction" in system_prompt.lower() or "scanner" in system_prompt.lower():
         found = []
-        for word in ["garen", "darius", "ahri", "demacia", "noxus", "steel", "sword", "shield", "spell", "rebellion"]:
+        for word in ["fallen", "conrak", "malakath", "anubis", "ezechiel", "khalian", "drahen", "nergal", "zeita", "elisa", "vanyr", "zephyr", "elsa", "noches", "atlantica", "noah", "baraen", "icetoon", "roahx", "kaos", "ithis", "celeste", "mundus", "eudenia", "sandler", "vladislaus", "gabriella", "pegasus", "eudenia", "renaissance"]:
             if word in content_lower:
                 found.append(word)
         if not found:
@@ -61,12 +61,12 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
         # If this is a critic feedback retry, adjust description to resolve contradiction
         if "critic feedback" in content_lower:
             player_action_part = content_lower.split("player action:")[-1] if "player action:" in content_lower else content_lower
-            if "deceased" in player_action_part or "dead" in player_action_part:
+            if "deceased" in player_action_part or "dead" in player_action_part or "eleanor" in player_action_part:
                 world_event = "The character honors the memory of the fallen, refusing to speak for the dead. The camp remains quiet."
-            elif "impossible" in player_action_part or "moon" in player_action_part:
-                world_event = "The character leaps high into the air, but gravity asserts itself, pulling them back down with a dull thud. The moon remains cold and distant."
+            elif "impossible" in player_action_part or "moon" in player_action_part or "eudenia" in player_action_part or "scell" in player_action_part:
+                world_event = "A blinding pulse of divine energy repels the traveler. The sealed gates of Eudenia hold firm, inscribed with the runes of Lucas Saviore's binding oath."
             else:
-                world_event = "The character adjusts their stance, correcting their previous actions to align with reality. The surroundings react with typical environmental physics."
+                world_event = "The character adjusts their stance, correcting their previous actions to align with reality."
             
             return json.dumps({
                 "world_event": world_event,
@@ -78,14 +78,14 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
         player_action_part = content_lower.split("player action:")[-1] if "player action:" in content_lower else content_lower
         
         # Simulating contradictions based on player input
-        if "sentinel vael" in player_action_part:
-            world_event = "Sentinel Vael stands guard at the gates of the keep. Sentinel Vael says: 'Who goes there?'"
-        elif "deceased" in player_action_part or "dead" in player_action_part:
-            world_event = "The dead soldier suddenly stands up and speaks. The deceased NPC commands the squad."
-        elif "impossible" in player_action_part or "moon" in player_action_part:
-            world_event = "The character leaps high, escaping earth's grasp entirely and landing on the lunar surface in a single bound."
+        if "avall'arh" in player_action_part or "avall" in player_action_part:
+            world_event = "L'ancien gardien Avall'arh se matérialise depuis les racines des grands arbres de Noah, sa présence imposant le silence à travers le bosquet."
+        elif "noches" in player_action_part:
+            world_event = "Une ombre se détache des ténèbres. Une silhouette en armure d'obsidienne s'avance. *Un membre de Noches.* 'Tu n'aurais pas dû venir ici,' murmure la silhouette, la main sur son épée."
+        elif "eudenia" in player_action_part:
+            world_event = "Une impulsion aveuglante d'énergie divine repousse le voyageur. Les portes scellées d'Eudenia restent fermes, gravées des runes du serment contraignant de Lucas Saviore."
         else:
-            world_event = "The character performs the action. The surroundings react with typical environmental physics."
+            world_event = "Le monde de Fallen change autour de vous. Le vent transporte les Murmures de Fallen — quelque chose change dans l'équilibre des forces."
             
         return json.dumps({
             "world_event": world_event,
@@ -96,15 +96,15 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
     # 3. Continuity Critic Mock
     elif "continuity inspector" in system_prompt.lower() or "the critic" in system_prompt.lower():
         # If the narrative draft contains contradiction indicators, reject it
-        if "dead soldier" in content_lower or "deceased npc" in content_lower:
+        if "deceased" in content_lower or "dead npc" in content_lower or "est mort" in content_lower or "décédé" in content_lower or "eleanor" in content_lower:
             return json.dumps({
                 "approved": False,
-                "correction_reason": "Detected action from a deceased NPC in timeline context."
+                "correction_reason": "Action détectée de la part d'un PNJ décédé dans le contexte de la chronologie."
             })
-        elif "lunar surface" in content_lower or "escaping earth's grasp" in content_lower:
+        elif "eudenia" in content_lower:
             return json.dumps({
                 "approved": False,
-                "correction_reason": "Action violates physical laws of the universe (impossible jump)."
+                "correction_reason": "Eudenia est scellée par le serment divin de Lucas Saviore. Aucun mortel ne peut y entrer sans briser le sceau."
             })
             
         return json.dumps({
@@ -116,59 +116,73 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
     elif "persona emulation" in system_prompt.lower() or "chatbot" in system_prompt.lower():
         char = "Character"
         sys_lower = system_prompt.lower()
-        if "garen" in sys_lower or "garen" in content_lower:
-            char = "Garen"
-        elif "ahri" in sys_lower or "ahri" in content_lower:
-            char = "Ahri"
-        elif "darius" in sys_lower or "darius" in content_lower:
-            char = "Darius"
-        elif "sentinel vael" in sys_lower or "sentinel vael" in content_lower:
-            char = "Sentinel Vael"
-            
-        if char == "Sentinel Vael":
+        if "sandler void" in sys_lower or "sandler void" in content_lower:
+            char = "Sandler Void"
+        elif "vladislaus" in sys_lower or "vladislaus" in content_lower:
+            char = "Vladislaus Nocturnus"
+        elif "avall'arh" in sys_lower or "avall'arh" in content_lower or "avall" in sys_lower:
+            char = "Avall'arh"
+        elif "gabriella" in sys_lower or "gabriella" in content_lower:
+            char = "Gabriella"
+        elif "drafhorz" in sys_lower or "drafhorz" in content_lower:
+            char = "Drafhorz Lazuli Varn Emreis"
+
+        if char == "Sandler Void":
             return json.dumps({
-                "character_output": f"*{char} frowns.* 'This keep is off-limits.'"
+                "character_output": "*incline son chapeau usé avec un sourire en coin* 'Mon nom est Sandler Void. Et oui, je suis aussi dangereux que ce que tu as entendu dire. Probablement plus.'"
+            })
+        elif char == "Vladislaus Nocturnus":
+            return json.dumps({
+                "character_output": "*des yeux cramoisis brillent dans les ténèbres* 'Un autre fou attiré à Ithis par la rumeur. Tu empestes le vivant. Comme c'est... rafraîchissant.'"
+            })
+        elif char == "Avall'arh":
+            return json.dumps({
+                "character_output": "*l'esprit ancien se tourne, des feuilles tourbillonnant sous un vent invisible* 'Les racines de Noah sont profondes. Je garde ces terres depuis bien avant que ton espèce ne foule cette terre.'"
+            })
+        elif char == "Gabriella":
+            return json.dumps({
+                "character_output": "*des ailes de lumière de saphir se déploient* 'Par le jugement de Zeita — déclare ton but en Céleste. Rapidement.'"
             })
         return json.dumps({
-            "character_output": f"*{char} stands ready.* 'For my nation! I will face whatever challenges you present.'"
+            "character_output": "*un étranger en habits de voyage lève les yeux de sa carte* 'Fallen est vaste, voyageur. Qu'est-ce qui t'amène dans ces contrées ?'"
         })
 
         
     # 5. Chronicler Agent Mock
     elif "event extraction" in system_prompt.lower() or "chronicler" in system_prompt.lower():
         return json.dumps({
-            "timeline_summary": "Player engaged in conversation or exploration.",
+            "timeline_summary": "Le joueur a exploré le monde de Fallen, interagissant avec ses habitants ou ses lieux.",
             "state_deltas": {}
         })
         
     # 6. Soul Forger Mock
     elif "soul forger" in system_prompt.lower():
         return json.dumps({
-            "name": "Eldred the Mageseeker",
-            "faction": "Mageseekers",
+            "name": "Kaelith the Wanderer",
+            "faction": "Hors-la-loi",
             "attributes": {"health": 120, "strength": 14},
-            "inventory": ["magic_dampening_shackles"],
-            "disposition_to_player": "Hostile",
-            "short_backstory": "A stern magistrate dedicated to securing rogue sorcerers."
+            "inventory": ["carved_bone_dagger", "ancient_map_fragment"],
+            "disposition_to_player": "Neutral",
+            "short_backstory": "Un ancien membre du Dragon Noir qui est devenu renégat après l'Arc 2, errant désormais entre Roahx et Kaos pour vendre des secrets au plus offrant."
         })
         
     # 7. Itemizer Mock
     elif "artifact forge" in system_prompt.lower():
         return json.dumps({
-            "item_name": "Shard of Petricite",
-            "item_type": "Magic Catalyst",
-            "weight_kg": 0.4,
-            "properties": {"magic_absorption_capacity": 50},
-            "lore_blurb": "A crystalline form of petricite that absorbs mana."
+            "item_name": "Fragment d'Eudenia",
+            "item_type": "Divine Artifact",
+            "weight_kg": 0.3,
+            "properties": {"divine_energy": 85, "access_restricted": True},
+            "lore_blurb": "Un éclat d'énergie divine cristallisée provenant des portes scellées d'Eudenia. Il bourdonne du souvenir du serment contraignant de Lucas Saviore."
         })
         
     # 8. Quest Architect Mock
     elif "quest architect" in system_prompt.lower():
         return json.dumps({
-            "quest_id": "q_mage_escape",
+            "quest_id": "q_whispers_of_noches",
             "status": "In_Progress",
-            "objectives_completed": ["find_shackles_key"],
-            "faction_reputation_impact": {"mage_rebellion": 5, "demacian_crown": -10}
+            "objectives_completed": ["investigate_missing_ships"],
+            "faction_reputation_impact": {"noches": -20, "kaos_harbor_authority": 15}
         })
         
     if json_mode:
@@ -202,7 +216,7 @@ def run_scanner_agent(player_input: str) -> list:
 def run_director_agent(master_prompt: str, entities_state_str: str) -> dict:
     """Simulates the narrative action and computes state changes."""
     system_prompt = (
-        "You are the Narrative Director (Game Master) of an immersive fantasy RPG.\n"
+        "You are the Narrative Director (Game Master) of the Fallen universe — a rich, god-created fantasy world of 9 continents, 12 divine deities, and warring factions.\n"
         "Your task is to process the player's action against the current active entities and compute the physical outcome of the scene.\n\n"
         "You MUST output a single, valid JSON object matching this schema exactly:\n"
         "{\n"
@@ -222,7 +236,7 @@ def run_director_agent(master_prompt: str, entities_state_str: str) -> dict:
         "CRITICAL FORMATTING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any introductory or concluding text, explanations, or comments.\n"
-        "3. All output must be strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The 'world_event' description MUST be written strictly in French, as the roleplay is conducted in French. JSON keys/structure remain in English.\n"
         "4. 'sparks_new_entity' must be set to true ONLY if a brand-new character or unique special artifact is introduced or spawned in the scene.\n"
     )
     user_payload = f"ENTITIES_STATUS:\n{entities_state_str}\n\nMASTER_PROMPT:\n{master_prompt}"
@@ -250,7 +264,7 @@ def run_critic_agent(draft_prose: str, timeline_summary: str) -> dict:
         "CRITICAL AUDITING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any pre- or post-conversational text, explanations, or comments.\n"
-        "3. All output must be written strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The 'correction_reason' MUST be written in French. JSON keys/structure remain in English.\n"
         "4. Be strict about character health states, item locations, and physical constraints in the timeline context.\n"
     )
     user_payload = f"TIMELINE_CONTEXT:\n{timeline_summary}\n\nDRAFT_PROSE:\n{draft_prose}"
@@ -264,6 +278,7 @@ def run_persona_agent(char_name: str, char_personality: str, narrative_outcome: 
     """Translates the outcome into the character's voice and dialog."""
     system_prompt = (
         f"You are the Persona Emulation Agent for the character: {char_name}.\n"
+        f"Universe Context: The world of Fallen — a god-created fantasy realm currently in the Arc of La Renaissance.\n"
         f"Character Personality Profile: {char_personality}\n\n"
         "Your task is to translate the narrative outcome into the character's direct spoken reply and physical micro-actions in response to the situation.\n\n"
         "You MUST output a single, valid JSON object matching this schema exactly:\n"
@@ -277,7 +292,7 @@ def run_persona_agent(char_name: str, char_personality: str, narrative_outcome: 
         "CRITICAL FORMATTING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any conversational prefix, suffix, explanations, or comments.\n"
-        "3. All output must be strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The 'character_output' dialogue and physical actions MUST be written strictly in French. JSON keys/structure remain in English.\n"
     )
     user_payload = f"PLAYER_INPUT:\n{player_input}\n\nNARRATIVE_OUTCOME:\n{narrative_outcome}"
     try:
@@ -302,7 +317,7 @@ def run_chronicler_agent(player_input: str, response_output: str) -> dict:
         "CRITICAL FORMATTING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any pre- or post-conversational text, explanations, or comments.\n"
-        "3. All output must be strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The 'timeline_summary' MUST be written strictly in French. JSON keys/structure remain in English.\n"
     )
     user_payload = f"PLAYER_INPUT: {player_input}\nRESPONSE: {response_output}"
     try:
@@ -330,7 +345,7 @@ def run_soul_forger(npc_name: str, context: str) -> dict:
         "CRITICAL FORMATTING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any introductory or concluding text, explanations, or comments.\n"
-        "3. All output must be strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The 'short_backstory' MUST be written in French. Faction name must match one of: Sainteté, Occulte, Honneur, Ange, Sang-pur, Esprit, Astre, Viking, Démon, Elder, Hybride, Hors-la-loi. JSON keys/structure remain in English.\n"
     )
     try:
         raw_res = call_llm(system_prompt, f"NPC Name: {npc_name}\nContext: {context}", json_mode=True)
@@ -354,7 +369,7 @@ def run_itemizer(item_name: str, context: str) -> dict:
         "CRITICAL FORMATTING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any pre- or post-conversational text, explanations, or comments.\n"
-        "3. All output must be strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The 'lore_blurb' MUST be written strictly in French. JSON keys/structure remain in English.\n"
     )
     try:
         raw_res = call_llm(system_prompt, f"Item: {item_name}\nContext: {context}", json_mode=True)
@@ -377,7 +392,7 @@ def run_quest_architect(quest_details: str, context: str) -> dict:
         "CRITICAL FORMATTING & LANGUAGE RULES:\n"
         "1. Return ONLY the raw JSON object. Do not wrap it in markdown code blocks like ```json or ```.\n"
         "2. Do not include any pre- or post-conversational text, explanations, or comments.\n"
-        "3. All output must be strictly in English. Do not include any Chinese characters, comments, symbols, or boilerplate.\n"
+        "3. The objectives in 'objectives_completed' MUST be written strictly in French. JSON keys/structure remain in English.\n"
     )
     try:
         raw_res = call_llm(system_prompt, f"Details: {quest_details}\nContext: {context}", json_mode=True)

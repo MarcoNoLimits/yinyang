@@ -6,8 +6,14 @@ from config import DATABASE_URL
 logger = logging.getLogger("db")
 
 def get_db_connection():
-    """Returns a connection to the PostgreSQL database."""
-    conn = psycopg2.connect(DATABASE_URL)
+    """Returns a connection to the PostgreSQL database.
+    
+    connect_timeout=3 ensures fast failure when no local DB is available
+    (e.g., during testing without Supabase). Without this, each failed
+    attempt blocks for the OS default (~4s), making the full swarm pipeline
+    take 90+ seconds per request.
+    """
+    conn = psycopg2.connect(DATABASE_URL, connect_timeout=3)
     return conn
 
 def retrieve_lore_entries(universe_id: str, keywords: list, embedding_vector: list = None, limit: int = 5):

@@ -1,1337 +1,1416 @@
-import React, { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "../config/supabaseClient";
-import { 
-  Terminal, 
-  Database, 
-  Activity, 
-  Cpu, 
-  LogOut, 
-  Plus, 
-  Trash2, 
-  BookOpen, 
-  Compass, 
-  Sword,
-  CheckCircle,
-  XCircle,
-  Clock
-} from "lucide-react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+} from 'react';
 
-export interface Message {
-  text: string;
-  sender: string;
-}
+// ─── Lorebook Data ───────────────────────────────────────────────────────────
 
-export interface Universe {
-  universe_id: string;
-  name: string;
-  description: string;
-}
+const DIVINITES = [
+  { name: 'Conrak', domain: 'Fortune & Chance' },
+  { name: 'Malakath', domain: 'Sorcellerie & Fourberie' },
+  { name: 'Anubis', domain: 'La Mort' },
+  { name: 'Ézéchiel', domain: 'Gloire & Pureté' },
+  { name: 'Khālian', domain: 'Lune & Métamorphose' },
+  { name: 'Drahen', domain: 'Courage & Sagesse' },
+  { name: 'Nergal', domain: 'Corruption & Pouvoir' },
+  { name: 'Zeita', domain: 'Raison & Jugement' },
+  { name: 'Élisa', domain: 'La Nature' },
+  { name: 'Vanyr', domain: 'Volonté & Limites' },
+  { name: 'Zëphyr', domain: 'Arts & Adaptation' },
+  { name: 'Elsa', domain: 'Mers & Océans' },
+];
 
-export interface LorebookEntry {
-  entry_id: string;
-  universe_id: string;
-  title: string;
-  keywords: string[];
+const FACTIONS = [
+  'Sainteté',
+  'Occulte',
+  'Honneur',
+  'Ange',
+  'Sang-pur',
+  'Esprit',
+  'Astre',
+  'Viking',
+  'Démon',
+  'Elder',
+  'Hybride',
+  'Hors-la-loi',
+];
+
+const GRANDES_PUISSANCES = [
+  { rank: 1, name: 'Drafhorz Lazuli Varn Emreis', faction: 'Elder', title: 'Empereur de Rezvenia' },
+  { rank: 2, name: 'Kaars Agius', faction: 'Hybride', title: 'Vainqueur de Thars' },
+  { rank: 3, name: "Avall'arh", faction: 'Esprit', title: 'Gardien Suprême de Noah' },
+  { rank: 4, name: 'Gabriella', faction: 'Ange', title: "L'Arme Ultime de Céleste" },
+  { rank: 5, name: 'Cécilia Varn Emreis', faction: 'Elder', title: 'Princesse de Rezvenia' },
+];
+
+const CURRENT_EVENTS = [
+  '📜 Des navires de Kaos disparaissent mystérieusement en mer',
+  '🏜️ Une cité de pyramides émerge du sable en Baraen',
+  "❄️ Silhouette draconique aperçue dans les mers gelées d'Icetoon",
+  '⚔️ Rasmus lance des raids de pillage sur Al-Far',
+  '🌙 Pleine lune en Ithis — la forêt de Vianum est interdite',
+];
+
+const WELCOME_MESSAGE = `Les portes d'Eudenia frémissent dans l'obscurité des temps.\n\nVous vous réveillez dans le monde de **Fallen** — une terre façonnée par des mains divines, traversée par six siècles de guerres, de héros et de prophéties. L'arc actuel, *La Renaissance*, bat à son comble. Des murmures courent sur toutes les places de marché : les sceaux de Lucas Saviore s'affaiblissent.\n\nOù vous trouvez-vous ? Qui êtes-vous dans ce vaste monde ?`;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Message {
+  id: string;
+  role: 'player' | 'director' | 'npc';
   content: string;
+  npcName?: string;
+  timestamp: Date;
 }
 
-export interface Entity {
-  entity_id: string;
-  universe_id: string;
-  entity_type: string;
+interface Entity {
   name: string;
-  properties: any;
-  is_alive: boolean;
+  type: string;
+  status: string;
 }
 
-export interface Quest {
-  quest_id: string;
+interface Quest {
+  id: string;
   title: string;
-  description: string;
-  status: 'ACTIVE' | 'COMPLETED' | 'FAILED';
-  reward: string;
+  status: 'active' | 'completed' | 'failed';
 }
 
-export default function Chat() {
-  const navigate = useNavigate();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+interface SessionStats {
+  PE: number;
+  XP: number;
+  PR: number;
+}
 
-  // Auth / Session States
-  const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<{ username: string; userId: string } | null>(null);
+interface LorebookOpen {
+  divinites: boolean;
+  factions: boolean;
+  puissances: boolean;
+}
 
-  // Chat Session States
-  const [chatId, setChatId] = useState<number>(0);
-  const [sessionsList, setSessionsList] = useState<{ chatId: number; name: string }[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState<string>("");
-  const [typing, setTyping] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+// ─── Utility: Render narrative markdown ──────────────────────────────────────
 
-  // Universe States
-  const [universes, setUniverses] = useState<Universe[]>([]);
-  const [selectedUniverseId, setSelectedUniverseId] = useState<string>('f0000000-0000-0000-0000-000000000001'); // Defaults to Fallen
-  const [newUnivName, setNewUnivName] = useState<string>('');
-  const [newUnivDesc, setNewUnivDesc] = useState<string>('');
+function parseNarrative(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const lines = text.split('\n');
 
-  // Default character state to satisfy DB foreign keys in chats table
-  const [defaultCharId, setDefaultCharId] = useState<number>(1);
-  const [defaultCharName, setDefaultCharName] = useState<string>("Swarm Oracle");
-  const [defaultCharPrompt, setDefaultCharPrompt] = useState<string>("You are the guiding consciousness of the swarm terminal.");
+  lines.forEach((line, li) => {
+    if (li > 0) nodes.push(<br key={`br-${li}`} />);
 
-  // Right-Panel Ledger Tabs
-  const [activeTab, setActiveTab] = useState<'lorebook' | 'entities' | 'quests'>('lorebook');
+    // Parse **bold** and *italic* inline
+    const segments: React.ReactNode[] = [];
+    const pattern = /(\*\*(.+?)\*\*|\*(.+?)\*)/g;
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
 
-  // Lorebook States
-  const [lorebookEntries, setLorebookEntries] = useState<LorebookEntry[]>([]);
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  const [loreTitle, setLoreTitle] = useState<string>('');
-  const [loreKeywords, setLoreKeywords] = useState<string>('');
-  const [loreContent, setLoreContent] = useState<string>('');
+    while ((match = pattern.exec(line)) !== null) {
+      if (match.index > lastIdx) {
+        segments.push(line.slice(lastIdx, match.index));
+      }
+      if (match[2] !== undefined) {
+        segments.push(<strong key={`b-${li}-${match.index}`}>{match[2]}</strong>);
+      } else if (match[3] !== undefined) {
+        segments.push(<em key={`i-${li}-${match.index}`}>{match[3]}</em>);
+      }
+      lastIdx = match.index + match[0].length;
+    }
 
-  // Entity States
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [entityName, setEntityName] = useState<string>('');
-  const [entityType, setEntityType] = useState<string>('NPC');
-  const [entityProps, setEntityProps] = useState<string>(
-    JSON.stringify({ role: "Sentinel", faction: "Sentinels", threat: "High" }, null, 2)
+    if (lastIdx < line.length) {
+      segments.push(line.slice(lastIdx));
+    }
+
+    nodes.push(<span key={`line-${li}`}>{segments}</span>);
+  });
+
+  return nodes;
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function FallenLogo() {
+  return (
+    <div style={styles.logoContainer}>
+      <div style={styles.fallenTitle}>FALLEN</div>
+      <div style={styles.arcSubtitle}>Arc IV : La Renaissance</div>
+      <div style={styles.logoDivider} />
+    </div>
   );
-  const [entityIsAlive, setEntityIsAlive] = useState<boolean>(true);
+}
 
-  // Active Quests States (Persisted in localStorage per universe)
-  const [quests, setQuests] = useState<Quest[]>([]);
-  const [questTitle, setQuestTitle] = useState<string>('');
-  const [questDesc, setQuestDesc] = useState<string>('');
-  const [questReward, setQuestReward] = useState<string>('');
+function WorldEventTicker({ events }: { events: string[] }) {
+  const [idx, setIdx] = useState(0);
+  const [fading, setFading] = useState(false);
 
-  // Check user session
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          navigate("/Login");
-          return;
-        }
+    const interval = setInterval(() => {
+      setFading(true);
+      setTimeout(() => {
+        setIdx((prev) => (prev + 1) % events.length);
+        setFading(false);
+      }, 400);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [events.length]);
 
-        const { data: profile, error: profileError } = await supabase
-          .from("users")
-          .select("username, user_id, role")
-          .eq("user_id", session.user.id)
-          .single();
+  return (
+    <div style={styles.tickerWrapper}>
+      <div style={styles.tickerLabel}>ÉVÈNEMENTS DU MONDE</div>
+      <div
+        style={{
+          ...styles.tickerText,
+          opacity: fading ? 0 : 1,
+          transition: 'opacity 0.4s ease',
+        }}
+      >
+        {events[idx]}
+      </div>
+      <div style={styles.tickerDots}>
+        {events.map((_, i) => (
+          <div
+            key={i}
+            style={{
+              ...styles.tickerDot,
+              background: i === idx ? '#c9a84c' : '#2a2440',
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
-        if (profileError || !profile) {
-          console.error("Profile not found:", profileError);
-          navigate("/Login");
-          return;
-        }
+function StatBadge({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={styles.statBadge}>
+      <span style={styles.statLabel}>{label}</span>
+      <span style={styles.statValue}>{value}</span>
+    </div>
+  );
+}
 
-        if (profile.role !== "user" && profile.role !== "admin" && profile.role !== "moderator") {
-          navigate("/Login");
-          return;
-        }
+function FactionBadge({
+  name,
+  selected,
+  onClick,
+}: {
+  name: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        ...styles.factionBadge,
+        background: selected ? '#6b21a8' : '#12102a',
+        borderColor: selected ? '#c9a84c' : '#2a2440',
+        color: selected ? '#c9a84c' : '#8b84a8',
+        boxShadow: selected ? '0 0 8px #6b21a840' : 'none',
+      }}
+      title={name}
+    >
+      {name}
+    </button>
+  );
+}
 
-        setUser({
-          username: profile.username,
-          userId: profile.user_id,
-        });
-        setLoading(false);
-      } catch (err) {
-        console.error("Error loading session:", err);
-        navigate("/Login");
-      }
-    };
+function AccordionSection({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={styles.accordionSection}>
+      <button onClick={onToggle} style={styles.accordionHeader}>
+        <span style={styles.accordionTitle}>{title}</span>
+        <span style={{ color: '#c9a84c', fontSize: '12px', transition: 'transform 0.3s', display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+          ▼
+        </span>
+      </button>
+      {open && <div style={styles.accordionBody}>{children}</div>}
+    </div>
+  );
+}
 
-    checkSession();
-  }, [navigate]);
+function LoadingSpinner() {
+  return (
+    <div style={styles.spinnerWrapper}>
+      <div style={styles.spinner} />
+      <span style={styles.spinnerText}>Le destin se forge...</span>
+    </div>
+  );
+}
 
-  // Fetch characters on mount to pick a default to satisfy foreign keys
-  useEffect(() => {
-    const fetchDefaultChar = async () => {
-      try {
-        const { data, error } = await supabase.from("characters").select("*").limit(1);
-        if (data && data.length > 0 && !error) {
-          setDefaultCharId(data[0].char_id);
-          setDefaultCharName(data[0].char_name);
-          setDefaultCharPrompt(data[0].char_prompt || data[0].char_description);
-        }
-      } catch (err) {
-        console.error("Error fetching default character for database linkage:", err);
-      }
-    };
-    fetchDefaultChar();
-  }, []);
+function MessageBubble({ message }: { message: Message }) {
+  const isPlayer = message.role === 'player';
+  const isDirector = message.role === 'director';
 
-  // Fetch universes and initial settings
-  useEffect(() => {
-    fetchUniverses();
-  }, []);
-
-  // Sync session chats list
-  useEffect(() => {
-    if (user) {
-      fetchUserChats();
-    }
-  }, [user]);
-
-  // Sync universe databases and active quests
-  useEffect(() => {
-    if (selectedUniverseId) {
-      fetchLorebook(selectedUniverseId);
-      fetchEntities(selectedUniverseId);
-      loadActiveQuests(selectedUniverseId);
-    }
-  }, [selectedUniverseId]);
-
-  // Scroll to bottom of terminal log on new messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, typing]);
-
-  const fetchUniverses = async () => {
-    try {
-      const { data, error } = await supabase.from('universes').select('*').order('name');
-      if (error) {
-        console.error("Error fetching universes:", error);
-      } else if (data) {
-        setUniverses(data);
-        // If Fallen universe is in the list, keep selectedUniverseId. Otherwise select first.
-        const hasFallen = data.some(u => u.universe_id === 'f0000000-0000-0000-0000-000000000001');
-        if (!hasFallen && data.length > 0) {
-          setSelectedUniverseId(data[0].universe_id);
-        }
-      }
-    } catch (err) {
-      console.error("Error in fetchUniverses:", err);
-    }
-  };
-
-  const handleCreateUniverse = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newUnivName.trim()) return;
-    try {
-      const { data, error } = await supabase.from('universes').insert({
-        name: newUnivName.trim(),
-        description: newUnivDesc.trim()
-      }).select().single();
-
-      if (error) {
-        alert("Error creating universe: " + error.message);
-      } else if (data) {
-        setNewUnivName('');
-        setNewUnivDesc('');
-        await fetchUniverses();
-        setSelectedUniverseId(data.universe_id);
-      }
-    } catch (err) {
-      console.error("Error in handleCreateUniverse:", err);
-    }
-  };
-
-  const fetchUserChats = async () => {
-    if (!user) return;
-    try {
-      const { data, error } = await supabase
-        .from("chats")
-        .select("chat_id")
-        .eq("user_id", user.userId)
-        .order("chat_id", { ascending: false });
-
-      if (error) {
-        console.error("Error fetching chats:", error);
-        setSessionsList([]);
-        return;
-      }
-
-      if (data) {
-        const chats = data.map((c: any) => ({
-          chatId: c.chat_id,
-          name: `Log Session #${c.chat_id}`
-        }));
-        setSessionsList(chats);
-      }
-    } catch (err) {
-      console.error("Error in fetchUserChats:", err);
-    }
-  };
-
-  const loadSessionChat = async (sId: number) => {
-    setChatId(sId);
-    if (sId === 0) {
-      setMessages([{ text: "Swarm command prompt initialized. Direct simulation interface online.", sender: "system" }]);
-      return;
-    }
-    try {
-      const { data, error } = await supabase
-        .from("chats")
-        .select("chat_text")
-        .eq("chat_id", sId)
-        .single();
-
-      if (error || !data) {
-        setError("Console session load failed.");
-        return;
-      }
-
-      const allMessages = (data.chat_text || "").split("$$").filter((msg: string) => msg.trim() !== "");
-      let msgs: Message[] = [];
-      for (const msg of allMessages) {
-        if (msg.startsWith("[System]: ")) {
-          msgs.push({ text: msg.replace("[System]: ", ""), sender: "system" });
-        } else if (msg.startsWith("[User]: ")) {
-          msgs.push({ text: msg.replace("[User]: ", ""), sender: "user" });
-        } else if (msg.startsWith("[AI]: ")) {
-          msgs.push({ text: msg.replace("[AI]: ", ""), sender: "ai" });
-        } else {
-          let Sender = msgs.length % 2 === 0 ? "user" : "ai";
-          msgs.push({ text: msg, sender: Sender });
-        }
-      }
-      setMessages(msgs);
-    } catch (err) {
-      console.error("Error loading chat session:", err);
-    }
-  };
-
-  const handleCreateSession = () => {
-    setChatId(0);
-    setMessages([{ text: "New Terminal console ready. Send a command to establish link.", sender: "system" }]);
-  };
-
-  const handleDeleteSession = async (sId: number) => {
-    try {
-      const { error } = await supabase
-        .from("chats")
-        .delete()
-        .eq("chat_id", sId);
-      if (!error) {
-        await fetchUserChats();
-        if (chatId === sId) {
-          handleCreateSession();
-        }
-      } else {
-        console.error("Error deleting session:", error);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim() || !user) return;
-    const currentMsg = inputText;
-    setInputText("");
-    setError(null);
-
-    let userMsgText = "";
-    if (chatId === 0) {
-      userMsgText += "[User]: " + currentMsg + "$$";
-      try {
-        setTyping(true);
-        const { data: newChat, error: insertError } = await supabase
-          .from("chats")
-          .insert({
-            user_id: user.userId,
-            char_id: defaultCharId,
-            chat_text: userMsgText
-          })
-          .select("chat_id")
-          .single();
-
-        if (insertError || !newChat) {
-          setError("Failed to initialize console session.");
-          setTyping(false);
-          return;
-        }
-
-        const newChatId = newChat.chat_id;
-        setChatId(newChatId);
-
-        const newMessages = [...messages, { text: currentMsg, sender: "user" }];
-        setMessages(newMessages);
-
-        const response = await fetch("http://localhost:8000/chat/swarm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: "" + newChatId,
-            universe_id: selectedUniverseId,
-            char_id: defaultCharId,
-            char_name: defaultCharName,
-            char_personality: defaultCharPrompt,
-            message: currentMsg
-          })
-        });
-
-        if (response.ok) {
-          const apiRes = await response.json();
-          const aiReply = apiRes.response.content;
-          const worldEvent = apiRes.response.world_event;
-
-          let updatedChatText = userMsgText;
-          const finalMessages = [...newMessages];
-
-          if (worldEvent) {
-            updatedChatText += "[System]: " + worldEvent + "$$";
-            finalMessages.push({ text: worldEvent, sender: "system" });
-          }
-          updatedChatText += "[AI]: " + aiReply + "$$";
-          finalMessages.push({ text: aiReply, sender: "ai" });
-
-          await supabase
-            .from("chats")
-            .update({ chat_text: updatedChatText })
-            .eq("chat_id", newChatId);
-
-          setMessages(finalMessages);
-          setTyping(false);
-          await fetchUserChats();
-        } else {
-          setError("Failed to fetch swarm matrix response.");
-          setTyping(false);
-        }
-      } catch (err) {
-        console.error("Error creating session:", err);
-        setError("Network failure.");
-        setTyping(false);
-      }
-    } else {
-      try {
-        setTyping(true);
-        const { data: existingChat, error: fetchError } = await supabase
-          .from("chats")
-          .select("chat_text")
-          .eq("chat_id", chatId)
-          .single();
-
-        if (fetchError || !existingChat) {
-          setError("Session lost.");
-          setTyping(false);
-          return;
-        }
-
-        const currentChatText = existingChat.chat_text || "";
-        const updatedUserChatText = currentChatText + "[User]: " + currentMsg + "$$";
-
-        await supabase
-          .from("chats")
-          .update({ chat_text: updatedUserChatText })
-          .eq("chat_id", chatId);
-
-        const newMessages = [...messages, { text: currentMsg, sender: "user" }];
-        setMessages(newMessages);
-
-        const response = await fetch("http://localhost:8000/chat/swarm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: "" + chatId,
-            universe_id: selectedUniverseId,
-            char_id: defaultCharId,
-            char_name: defaultCharName,
-            char_personality: defaultCharPrompt,
-            message: currentMsg
-          })
-        });
-
-        if (response.ok) {
-          const apiRes = await response.json();
-          const aiReply = apiRes.response.content;
-          const worldEvent = apiRes.response.world_event;
-
-          let updatedAIChatText = updatedUserChatText;
-          const finalMessages = [...newMessages];
-
-          if (worldEvent) {
-            updatedAIChatText += "[System]: " + worldEvent + "$$";
-            finalMessages.push({ text: worldEvent, sender: "system" });
-          }
-          updatedAIChatText += "[AI]: " + aiReply + "$$";
-          finalMessages.push({ text: aiReply, sender: "ai" });
-
-          await supabase
-            .from("chats")
-            .update({ chat_text: updatedAIChatText })
-            .eq("chat_id", chatId);
-
-          setMessages(finalMessages);
-          setTyping(false);
-        } else {
-          setError("Model failed to process directive.");
-          setTyping(false);
-        }
-      } catch (err) {
-        console.error("Error updating session:", err);
-        setError("Network connection timeout.");
-        setTyping(false);
-      }
-    }
-  };
-
-  // Lorebook Database Handlers
-  const fetchLorebook = async (univId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('lorebook_entries')
-        .select('*')
-        .eq('universe_id', univId)
-        .order('created_at', { ascending: false });
-      if (error) console.error("Error fetching lorebook:", error);
-      else if (data) setLorebookEntries(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleSaveLorebook = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!loreTitle.trim() || !loreContent.trim()) return;
-    const keywordArray = loreKeywords.split(',').map(k => k.trim()).filter(Boolean);
-
-    try {
-      if (editingEntryId) {
-        const { error } = await supabase
-          .from('lorebook_entries')
-          .update({
-            title: loreTitle.trim(),
-            keywords: keywordArray,
-            content: loreContent.trim()
-          })
-          .eq('entry_id', editingEntryId);
-
-        if (error) {
-          alert("Error: " + error.message);
-        } else {
-          setEditingEntryId(null);
-          setLoreTitle('');
-          setLoreKeywords('');
-          setLoreContent('');
-          fetchLorebook(selectedUniverseId);
-        }
-      } else {
-        const { error } = await supabase
-          .from('lorebook_entries')
-          .insert({
-            universe_id: selectedUniverseId,
-            title: loreTitle.trim(),
-            keywords: keywordArray,
-            content: loreContent.trim()
-          });
-
-        if (error) {
-          alert("Error: " + error.message);
-        } else {
-          setLoreTitle('');
-          setLoreKeywords('');
-          setLoreContent('');
-          fetchLorebook(selectedUniverseId);
-        }
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Entities Ledger Handlers
-  const fetchEntities = async (univId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('entities')
-        .select('*')
-        .eq('universe_id', univId)
-        .order('name');
-      if (error) console.error("Error fetching entities:", error);
-      else if (data) setEntities(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleCreateEntity = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!entityName.trim()) return;
-    let parsedProps = {};
-    try {
-      parsedProps = JSON.parse(entityProps || '{}');
-    } catch (err) {
-      alert("Invalid JSON format in Properties editor.");
-      return;
-    }
-
-    try {
-      const { error } = await supabase.from('entities').insert({
-        universe_id: selectedUniverseId,
-        name: entityName.trim(),
-        entity_type: entityType,
-        properties: parsedProps,
-        is_alive: entityIsAlive
-      });
-
-      if (error) {
-        alert("Error: " + error.message);
-      } else {
-        setEntityName('');
-        setEntityProps(JSON.stringify({ role: "Sentinel", faction: "Sentinels", threat: "High" }, null, 2));
-        fetchEntities(selectedUniverseId);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Active Quests Handlers
-  const loadActiveQuests = (univId: string) => {
-    const stored = localStorage.getItem(`quests_${univId}`);
-    if (stored) {
-      try {
-        setQuests(JSON.parse(stored));
-      } catch (e) {
-        setQuests([]);
-      }
-    } else {
-      if (univId === 'f0000000-0000-0000-0000-000000000001') {
-        const defaultFallenQuests: Quest[] = [
-          {
-            quest_id: 'q1',
-            title: 'Contain Crimson Waste Void Leak',
-            description: 'Seal the expanding cosmic rift in the wastes before the obsidian structures collapse.',
-            status: 'ACTIVE',
-            reward: '500 Cryptic Residues'
-          },
-          {
-            quest_id: 'q2',
-            title: 'Deconstruct the Crimson Keep Sentinel',
-            description: 'Extract volatile engine modules from deactivated keepers.',
-            status: 'ACTIVE',
-            reward: 'Prime Obsidian Core'
-          }
-        ];
-        setQuests(defaultFallenQuests);
-        localStorage.setItem(`quests_${univId}`, JSON.stringify(defaultFallenQuests));
-      } else {
-        setQuests([]);
-      }
-    }
-  };
-
-  const saveQuests = (updatedQuests: Quest[]) => {
-    setQuests(updatedQuests);
-    localStorage.setItem(`quests_${selectedUniverseId}`, JSON.stringify(updatedQuests));
-  };
-
-  const handleCreateQuest = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!questTitle.trim() || !questDesc.trim()) return;
-
-    const newQuest: Quest = {
-      quest_id: Math.random().toString(36).substring(2, 9),
-      title: questTitle.trim(),
-      description: questDesc.trim(),
-      status: 'ACTIVE',
-      reward: questReward.trim() || 'Unspecified Artifact'
-    };
-
-    const list = [newQuest, ...quests];
-    saveQuests(list);
-    setQuestTitle("");
-    setQuestDesc("");
-    setQuestReward("");
-  };
-
-  const handleToggleQuestStatus = (qId: string, status: 'ACTIVE' | 'COMPLETED' | 'FAILED') => {
-    const list = quests.map(q => q.quest_id === qId ? { ...q, status } : q);
-    saveQuests(list);
-  };
-
-  const handleDeleteQuest = (qId: string) => {
-    const list = quests.filter(q => q.quest_id !== qId);
-    saveQuests(list);
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/Login");
-  };
-
-  if (loading || !user) {
+  if (isDirector) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[#05070a] text-cyan-500 font-mono text-sm">
-        <div className="flex flex-col items-center space-y-4">
-          <Activity className="h-10 w-10 animate-spin" />
-          <span className="tracking-widest font-bold">BOOTING COGNITIVE SWARM SYSTEM...</span>
+      <div style={styles.directorMessage}>
+        <div style={styles.directorHeader}>
+          <span style={styles.directorIcon}>✦</span>
+          <span style={styles.directorLabel}>DIRECTEUR NARRATIF</span>
+          <span style={styles.messageTime}>
+            {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </div>
+        <div style={styles.directorContent}>{parseNarrative(message.content)}</div>
+      </div>
+    );
+  }
+
+  if (isPlayer) {
+    return (
+      <div style={styles.playerMessageWrapper}>
+        <div style={styles.playerMessage}>
+          <div style={styles.playerContent}>{message.content}</div>
+          <div style={styles.playerMeta}>
+            <span style={styles.playerLabel}>VOUS</span>
+            <span style={styles.messageTimePlayer}>
+              {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
         </div>
       </div>
     );
   }
 
-  const selectedUniverse = universes.find(u => u.universe_id === selectedUniverseId);
-
+  // NPC
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#05070d] text-[#c8d3f5] font-mono overflow-hidden select-none relative scanline">
-      {/* Glow effects stylesheet */}
-      <style dangerouslySetInnerHTML={{__html: `
-        .terminal-glow {
-          box-shadow: 0 0 20px rgba(6, 182, 212, 0.1);
-        }
-        .terminal-glow-active {
-          box-shadow: 0 0 25px rgba(6, 182, 212, 0.2);
-        }
-        .terminal-glow-purple {
-          box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
-        }
-        .custom-scroll::-webkit-scrollbar {
-          width: 5px;
-          height: 5px;
-        }
-        .custom-scroll::-webkit-scrollbar-track {
-          background: #020308;
-        }
-        .custom-scroll::-webkit-scrollbar-thumb {
-          background: #111827;
-          border-radius: 4px;
-        }
-        .custom-scroll::-webkit-scrollbar-thumb:hover {
-          background: #0891b2;
-        }
-        .scanline::after {
-          content: " ";
-          display: block;
-          position: absolute;
-          top: 0; left: 0; bottom: 0; right: 0;
-          background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-          z-index: 99999;
-          background-size: 100% 3px, 3px 100%;
-          pointer-events: none;
-        }
-      `}} />
-
-      {/* Atmospheric Sci-Fi Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-cyan-950 bg-[#070a14] z-10 shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_10px_#00f0ff]" />
-          <span className="text-xs text-cyan-400 font-bold tracking-widest uppercase">SWARM_UNIVERSE_LINK v4.10.8</span>
-        </div>
-        <div className="text-sm font-black text-cyan-200 tracking-wider flex items-center gap-2">
-          <Terminal className="h-4 w-4 text-cyan-400" />
-          <span>{selectedUniverse ? selectedUniverse.name.toUpperCase() : "COSMIC CORE LINK"}</span>
-        </div>
-        <div className="flex items-center space-x-4">
-          <div className="text-xs text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
-            OPERATOR: <span className="text-cyan-400 font-semibold">{user.username.toUpperCase()}</span>
-          </div>
-          <button 
-            onClick={handleLogout}
-            className="flex items-center space-x-1 text-xs text-red-400 hover:text-red-300 transition-colors border border-red-950/40 hover:border-red-800/80 px-2.5 py-1 rounded bg-red-950/10 cursor-pointer"
-          >
-            <LogOut className="h-3 w-3" />
-            <span>EXIT_LINK</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Main Console Layout */}
-      <div className="flex flex-1 overflow-hidden">
-        
-        {/* LEFT COLUMN: Sessions & Status (20% width) */}
-        <aside className="w-1/5 bg-[#070a14]/90 border-r border-cyan-950/50 p-4 flex flex-col space-y-6 overflow-y-auto custom-scroll shrink-0">
-          
-          {/* Active Universe Selector */}
-          <div className="space-y-2.5">
-            <h3 className="text-xs font-semibold text-cyan-500 uppercase tracking-widest flex items-center gap-1.5 font-mono">
-              <Compass className="h-3.5 w-3.5" />
-              Universe Setting
-            </h3>
-            <select
-              value={selectedUniverseId}
-              onChange={(e) => setSelectedUniverseId(e.target.value)}
-              className="w-full bg-[#02040a] border border-cyan-950 rounded p-2 text-cyan-300 text-xs focus:outline-none focus:border-cyan-400 transition-all font-mono"
-            >
-              {universes.map((u) => (
-                <option key={u.universe_id} value={u.universe_id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-            {selectedUniverse && (
-              <div className="bg-[#02040a] border border-cyan-950/40 p-2.5 rounded text-[11px] text-slate-400 leading-relaxed text-justify">
-                {selectedUniverse.description}
-              </div>
-            )}
-          </div>
-
-          {/* Session Registry */}
-          <div className="flex flex-col flex-1 min-h-[200px] space-y-2.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold text-cyan-500 uppercase tracking-widest flex items-center gap-1.5">
-                <Cpu className="h-3.5 w-3.5" />
-                Console Logs
-              </h3>
-              <button 
-                onClick={handleCreateSession}
-                className="text-[10px] text-cyan-400 border border-cyan-950 hover:border-cyan-500/50 px-1.5 py-0.5 rounded bg-cyan-950/15 cursor-pointer flex items-center gap-0.5 transition-colors"
-                title="Initialize New link"
-              >
-                <Plus className="h-3 w-3" />
-                <span>NEW</span>
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto custom-scroll space-y-1 bg-[#02040a]/40 border border-cyan-950/20 p-1.5 rounded">
-              {sessionsList.length === 0 ? (
-                <div className="text-[11px] text-slate-600 italic p-2 font-mono">No logs found.</div>
-              ) : (
-                sessionsList.map((session) => (
-                  <div 
-                    key={session.chatId}
-                    onClick={() => loadSessionChat(session.chatId)}
-                    className={`flex items-center justify-between p-2 rounded text-xs cursor-pointer border transition-all ${
-                      chatId === session.chatId 
-                        ? "bg-cyan-950/20 border-cyan-500/60 text-cyan-200" 
-                        : "bg-transparent border-transparent hover:bg-slate-900/40 text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    <span className="truncate">{session.name}</span>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(session.chatId);
-                      }}
-                      className="text-red-900 hover:text-red-400 p-0.5 rounded hover:bg-red-950/30 transition-colors"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* System Diagnostics HUD */}
-          <div className="bg-[#02040a] border border-cyan-950/50 rounded p-3 space-y-2 shrink-0">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-cyan-950/30 pb-1">CONSOLE DIAGNOSTIC</h4>
-            <div className="grid grid-cols-2 gap-y-1 text-[9px] text-slate-400">
-              <span>SWARM SYNC</span>
-              <span className="text-green-500 text-right">SECURED</span>
-              <span>COGNITIVE LINK</span>
-              <span className="text-green-500 text-right">ONLINE</span>
-              <span>LORE INDEXER</span>
-              <span className="text-cyan-500 text-right">READY</span>
-              <span>QUEST ENGINE</span>
-              <span className="text-cyan-500 text-right">STANDBY</span>
-            </div>
-          </div>
-
-        </aside>
-
-        {/* CENTER COLUMN: Swarm Terminal Chrono-Logs (45% width) */}
-        <section className="w-9/20 border-r border-cyan-950/50 flex flex-col h-full bg-[#03050a] relative shrink-0">
-          
-          {/* Terminal Screen Header */}
-          <div className="flex items-center justify-between px-4 py-2 bg-[#060913] border-b border-cyan-950/40 text-xs text-slate-500 shrink-0">
-            <span>STATION: TERMINAL_ALPHA</span>
-            <span>SIMULATOR CONSOLE</span>
-          </div>
-
-          {/* Messages Feed */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scroll terminal-glow">
-            {messages.map((msg, index) => {
-              if (msg.sender === "system") {
-                return (
-                  <div key={index} className="border-l-2 border-purple-500 bg-purple-950/10 p-3 rounded-r text-purple-300 text-xs space-y-1">
-                    <div className="text-[10px] font-black text-purple-400 tracking-wider flex items-center gap-1">
-                      <Activity className="h-3 w-3 animate-pulse" />
-                      <span>[WORLD SYSTEM DYNAMICS WARNING]</span>
-                    </div>
-                    <p className="leading-relaxed">{msg.text}</p>
-                  </div>
-                );
-              }
-
-              const isUser = msg.sender === "user";
-              return (
-                <div key={index} className={`flex flex-col space-y-1 ${isUser ? "items-end" : "items-start"}`}>
-                  <span className="text-[9px] text-slate-500">
-                    {isUser ? "OP@CONSOLE:~#" : "SWARM_SIMULATOR_CORE_V4"}
-                  </span>
-                  <div 
-                    className={`px-3.5 py-2.5 rounded-lg text-xs leading-relaxed max-w-[85%] border shadow-sm ${
-                      isUser 
-                        ? "bg-[#0b1329] border-cyan-900/60 text-cyan-200" 
-                        : "bg-[#03060f] border-slate-900 text-slate-300"
-                    }`}
-                  >
-                    {msg.text}
-                  </div>
-                </div>
-              );
-            })}
-
-            {typing && (
-              <div className="flex flex-col space-y-1 items-start">
-                <span className="text-[9px] text-slate-500">SWARM_SIMULATOR_CORE_V4</span>
-                <div className="px-3.5 py-2 bg-[#03060f] border border-cyan-950/40 rounded text-cyan-400 text-xs flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
-                  <span className="animate-pulse tracking-widest text-[10px]">PARSING DIRECTIVES...</span>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="border border-red-950/60 bg-red-950/10 p-2.5 rounded text-red-400 text-xs flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                <span>{error}</span>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Terminal Command Input Area */}
-          <form onSubmit={sendMessage} className="p-3 bg-[#060913] border-t border-cyan-950/50 flex items-center gap-2 shrink-0">
-            <span className="text-cyan-600 font-black text-xs shrink-0 select-none">OP@CONSOLE:~#</span>
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Enter directive code / message..."
-              className="flex-1 bg-transparent text-cyan-100 text-xs focus:outline-none focus:ring-0 placeholder-cyan-900 border-none px-1 font-mono"
-            />
-            <button 
-              type="submit" 
-              className="text-[10px] text-cyan-400 border border-cyan-700/50 hover:bg-cyan-500 hover:text-black hover:border-cyan-300 font-bold px-3 py-1.5 rounded transition-all shrink-0 cursor-pointer uppercase tracking-wider"
-            >
-              EXECUTE
-            </button>
-          </form>
-
-        </section>
-
-        {/* RIGHT COLUMN: Universe Database Ledger & Quests Hub (35% width) */}
-        <section className="flex-1 flex flex-col h-full bg-[#04060b] overflow-hidden">
-          
-          {/* Navigation Ledger Tabs */}
-          <div className="flex border-b border-cyan-950/60 bg-[#070a14] shrink-0 text-xs">
-            <button 
-              onClick={() => setActiveTab('lorebook')}
-              className={`flex-1 py-3 text-center font-bold tracking-widest uppercase border-b-2 flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'lorebook' 
-                  ? 'border-cyan-500 text-cyan-400 bg-cyan-950/5' 
-                  : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-900/20'
-              }`}
-            >
-              <BookOpen className="h-3.5 w-3.5" />
-              Lorebook
-            </button>
-            <button 
-              onClick={() => setActiveTab('entities')}
-              className={`flex-1 py-3 text-center font-bold tracking-widest uppercase border-b-2 flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'entities' 
-                  ? 'border-cyan-500 text-cyan-400 bg-cyan-950/5' 
-                  : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-900/20'
-              }`}
-            >
-              <Database className="h-3.5 w-3.5" />
-              Entities
-            </button>
-            <button 
-              onClick={() => setActiveTab('quests')}
-              className={`flex-1 py-3 text-center font-bold tracking-widest uppercase border-b-2 flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'quests' 
-                  ? 'border-cyan-500 text-cyan-400 bg-cyan-950/5' 
-                  : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-900/20'
-              }`}
-            >
-              <Sword className="h-3.5 w-3.5" />
-              Active Quests
-            </button>
-          </div>
-
-          {/* Content Pane */}
-          <div className="flex-1 overflow-y-auto p-4 custom-scroll">
-            
-            {/* LOREBOOK TAB */}
-            {activeTab === 'lorebook' && (
-              <div className="space-y-6">
-                
-                {/* Save/Add Lorebook form */}
-                <form onSubmit={handleSaveLorebook} className="bg-[#020408] border border-cyan-950/70 p-3 rounded space-y-3">
-                  <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-widest flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" />
-                    {editingEntryId ? "Modify Lore Record" : "Append Lore Record"}
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1">RECORD TITLE</label>
-                      <input
-                        type="text"
-                        required
-                        value={loreTitle}
-                        onChange={(e) => setLoreTitle(e.target.value)}
-                        placeholder="e.g., The Void Swarm"
-                        className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1">KEYWORDS (comma-separated)</label>
-                      <input
-                        type="text"
-                        required
-                        value={loreKeywords}
-                        onChange={(e) => setLoreKeywords(e.target.value)}
-                        placeholder="void, corruption, leak"
-                        className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-500 mb-1">LORE CORE DATA</label>
-                    <textarea
-                      required
-                      value={loreContent}
-                      onChange={(e) => setLoreContent(e.target.value)}
-                      placeholder="Input chronological logs or world information..."
-                      rows={3}
-                      className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 resize-none font-mono"
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      className="flex-1 bg-cyan-950 hover:bg-cyan-800 text-cyan-300 text-[10px] font-bold py-1.5 rounded transition-colors cursor-pointer border border-cyan-700/40"
-                    >
-                      {editingEntryId ? "SAVE RECORD" : "ADD TO DATABASE"}
-                    </button>
-                    {editingEntryId && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingEntryId(null);
-                          setLoreTitle("");
-                          setLoreKeywords("");
-                          setLoreContent("");
-                        }}
-                        className="bg-slate-900 hover:bg-slate-800 text-slate-400 text-[10px] font-bold py-1.5 px-3 rounded transition-colors border border-slate-700/40"
-                      >
-                        CANCEL
-                      </button>
-                    )}
-                  </div>
-                </form>
-
-                {/* Lore Entries Display */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-cyan-950/20 pb-1">
-                    INDEXED RECORDS ({lorebookEntries.length})
-                  </h4>
-                  {lorebookEntries.length === 0 ? (
-                    <p className="text-xs text-slate-600 italic">No logs indexed for this universe.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {lorebookEntries.map((entry) => (
-                        <div 
-                          key={entry.entry_id}
-                          className="bg-[#020408] border border-cyan-950/40 hover:border-cyan-800/40 p-3 rounded transition-colors"
-                        >
-                          <div className="flex justify-between items-start">
-                            <span className="font-bold text-xs text-cyan-300">{entry.title}</span>
-                            <button
-                              onClick={() => {
-                                setEditingEntryId(entry.entry_id);
-                                setLoreTitle(entry.title);
-                                setLoreKeywords(entry.keywords.join(', '));
-                                setLoreContent(entry.content);
-                              }}
-                              className="text-[10px] text-cyan-500 hover:text-cyan-400 font-bold cursor-pointer"
-                            >
-                              [EDIT]
-                            </button>
-                          </div>
-                          <div className="flex flex-wrap gap-1 mt-1.5">
-                            {entry.keywords.map((kw, i) => (
-                              <span 
-                                key={i} 
-                                className="bg-cyan-950/30 text-cyan-400 border border-cyan-900/60 rounded px-1.5 py-0.5 text-[9px] font-semibold"
-                              >
-                                #{kw}
-                              </span>
-                            ))}
-                          </div>
-                          <p className="text-[11px] text-slate-400 mt-2 whitespace-pre-wrap leading-relaxed">
-                            {entry.content}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            )}
-
-            {/* ENTITIES LEDGER TAB */}
-            {activeTab === 'entities' && (
-              <div className="space-y-6">
-                
-                {/* Add Entity Form */}
-                <form onSubmit={handleCreateEntity} className="bg-[#020408] border border-cyan-950/70 p-3 rounded space-y-3">
-                  <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-widest flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" />
-                    Register Entity Ledger
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1">ENTITY NAME</label>
-                      <input
-                        type="text"
-                        required
-                        value={entityName}
-                        onChange={(e) => setEntityName(e.target.value)}
-                        placeholder="e.g., Sentinel Vael"
-                        className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1">ENTITY TYPE</label>
-                      <select
-                        value={entityType}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setEntityType(val);
-                          if (val === 'NPC') {
-                            setEntityProps(JSON.stringify({ role: "Sentinel", faction: "Sentinels", threat: "High" }, null, 2));
-                          } else if (val === 'ITEM') {
-                            setEntityProps(JSON.stringify({ description: "Ancient obsidian shard.", power: "Volatile" }, null, 2));
-                          } else if (val === 'LOCATION') {
-                            setEntityProps(JSON.stringify({ safety: "Critical Hazard", anomalies: "Void Rifts" }, null, 2));
-                          } else {
-                            setEntityProps(JSON.stringify({ status: "Hostile", population: "Vast" }, null, 2));
-                          }
-                        }}
-                        className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
-                      >
-                        <option value="NPC">NPC (Individual)</option>
-                        <option value="ITEM">Item (Artifact)</option>
-                        <option value="LOCATION">Location (Region)</option>
-                        <option value="FACTION">Faction (Group)</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-500 mb-1">SPECIFIC PROPERTIES (JSON)</label>
-                    <textarea
-                      value={entityProps}
-                      onChange={(e) => setEntityProps(e.target.value)}
-                      placeholder='{ "role": "Sentinel" }'
-                      rows={3}
-                      className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-[10px] focus:outline-none focus:border-cyan-500 font-mono resize-none"
-                    />
-                  </div>
-                  <div className="flex items-center space-x-2 py-1 select-none">
-                    <input
-                      type="checkbox"
-                      id="entityIsAliveCheck"
-                      checked={entityIsAlive}
-                      onChange={(e) => setEntityIsAlive(e.target.checked)}
-                      className="rounded bg-black border-cyan-950 text-cyan-500 focus:ring-0 cursor-pointer"
-                    />
-                    <label htmlFor="entityIsAliveCheck" className="text-[10px] text-slate-400 cursor-pointer">
-                      ACTIVE / ALIVE / OPERATIONAL STATUS
-                    </label>
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-cyan-950 hover:bg-cyan-800 text-cyan-300 text-[10px] font-bold py-1.5 rounded transition-colors cursor-pointer border border-cyan-700/40"
-                  >
-                    ADD TO REGISTRY
-                  </button>
-                </form>
-
-                {/* Entities List */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-cyan-950/20 pb-1">
-                    REGISTERED ENTITIES ({entities.length})
-                  </h4>
-                  {entities.length === 0 ? (
-                    <p className="text-xs text-slate-600 italic">No entities registered in this universe ledger.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {entities.map((entity) => (
-                        <div 
-                          key={entity.entity_id}
-                          className="bg-[#020408] border border-cyan-950/40 hover:border-cyan-800/40 p-3 rounded transition-colors"
-                        >
-                          <div className="flex justify-between items-center pb-1.5 border-b border-cyan-950/30">
-                            <span className="font-bold text-xs text-slate-200">{entity.name}</span>
-                            <span className="bg-cyan-950/40 text-cyan-400 border border-cyan-900/60 rounded px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider font-mono">
-                              {entity.entity_type}
-                            </span>
-                          </div>
-                          
-                          <div className="flex justify-between text-[10px] mt-2">
-                            <span className="text-slate-500">OPERATIONAL STATUS:</span>
-                            <span className={entity.is_alive ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
-                              {entity.is_alive ? "OPERATIONAL / ALIVE" : "DEACTIVATED / SHATTERED"}
-                            </span>
-                          </div>
-
-                          {entity.properties && Object.keys(entity.properties).length > 0 && (
-                            <div className="mt-2 bg-[#010204] p-2 rounded border border-cyan-950/40 text-[10px] font-mono text-cyan-300/80 space-y-0.5">
-                              {Object.entries(entity.properties).map(([k, v]) => (
-                                <div key={k} className="flex justify-between">
-                                  <span className="text-slate-500">{k}:</span>
-                                  <span className="text-cyan-400">{String(v)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            )}
-
-            {/* ACTIVE QUESTS TAB */}
-            {activeTab === 'quests' && (
-              <div className="space-y-6">
-                
-                {/* Add Quest Form */}
-                <form onSubmit={handleCreateQuest} className="bg-[#020408] border border-cyan-950/70 p-3 rounded space-y-3">
-                  <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-widest flex items-center gap-1">
-                    <Plus className="h-3.5 w-3.5" />
-                    Forge Quest Objective
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1">OBJECTIVE NAME</label>
-                      <input
-                        type="text"
-                        required
-                        value={questTitle}
-                        onChange={(e) => setQuestTitle(e.target.value)}
-                        placeholder="e.g., Contain Void leak"
-                        className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-1">REWARD SIGNAL</label>
-                      <input
-                        type="text"
-                        value={questReward}
-                        onChange={(e) => setQuestReward(e.target.value)}
-                        placeholder="500 Residues"
-                        className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 font-mono"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-slate-500 mb-1">OBJECTIVE DISPATCH</label>
-                    <textarea
-                      required
-                      value={questDesc}
-                      onChange={(e) => setQuestDesc(e.target.value)}
-                      placeholder="Detail the universe parameters for mission execution..."
-                      rows={3}
-                      className="w-full bg-[#060913] border border-cyan-950 rounded p-1.5 text-cyan-200 text-xs focus:outline-none focus:border-cyan-500 resize-none font-mono"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-cyan-950 hover:bg-cyan-800 text-cyan-300 text-[10px] font-bold py-1.5 rounded transition-colors cursor-pointer border border-cyan-700/40"
-                  >
-                    FORGE DIRECTIVE
-                  </button>
-                </form>
-
-                {/* Quests List */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest border-b border-cyan-950/20 pb-1">
-                    CURRENT MISSION LEDGER ({quests.length})
-                  </h4>
-                  {quests.length === 0 ? (
-                    <p className="text-xs text-slate-600 italic font-mono">No mission profiles active.</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {quests.map((quest) => (
-                        <div 
-                          key={quest.quest_id}
-                          className={`bg-[#020408] border p-3 rounded transition-colors flex flex-col space-y-2 ${
-                            quest.status === 'COMPLETED' 
-                              ? 'border-green-950/60 hover:border-green-800/40' 
-                              : quest.status === 'FAILED' 
-                              ? 'border-red-950/60 hover:border-red-800/40' 
-                              : 'border-cyan-950/40 hover:border-cyan-800/40'
-                          }`}
-                        >
-                          <div className="flex justify-between items-start">
-                            <span className={`font-bold text-xs ${
-                              quest.status === 'COMPLETED' 
-                                ? 'text-green-400' 
-                                : quest.status === 'FAILED' 
-                                ? 'text-red-400' 
-                                : 'text-cyan-300'
-                            }`}>
-                              {quest.title}
-                            </span>
-                            <button
-                              onClick={() => handleDeleteQuest(quest.quest_id)}
-                              className="text-slate-600 hover:text-red-400 transition-colors cursor-pointer"
-                              title="Delete objective"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-
-                          <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-                            {quest.description}
-                          </p>
-
-                          <div className="flex items-center justify-between text-[10px] bg-[#010204] p-1.5 rounded border border-cyan-950/20">
-                            <span className="text-slate-500">REWARD: <span className="text-cyan-400">{quest.reward}</span></span>
-                            
-                            {/* Toggle Options */}
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => handleToggleQuestStatus(quest.quest_id, 'COMPLETED')}
-                                className={`p-0.5 rounded cursor-pointer ${quest.status === 'COMPLETED' ? 'text-green-400 bg-green-950/20' : 'text-slate-600 hover:text-green-500'}`}
-                                title="Set Completed"
-                              >
-                                <CheckCircle className="h-4 w-4" />
-                              </button>
-                              <button 
-                                onClick={() => handleToggleQuestStatus(quest.quest_id, 'FAILED')}
-                                className={`p-0.5 rounded cursor-pointer ${quest.status === 'FAILED' ? 'text-red-400 bg-red-950/20' : 'text-slate-600 hover:text-red-500'}`}
-                                title="Set Failed"
-                              >
-                                <XCircle className="h-4 w-4" />
-                              </button>
-                              <button 
-                                onClick={() => handleToggleQuestStatus(quest.quest_id, 'ACTIVE')}
-                                className={`p-0.5 rounded cursor-pointer ${quest.status === 'ACTIVE' ? 'text-cyan-400 bg-cyan-950/20' : 'text-slate-600 hover:text-cyan-500'}`}
-                                title="Reactivate"
-                              >
-                                <Clock className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-              </div>
-            )}
-
-          </div>
-
-        </section>
-
+    <div style={styles.npcMessage}>
+      <div style={styles.npcHeader}>
+        <span style={styles.npcIcon}>◈</span>
+        <span style={styles.npcName}>{message.npcName ?? 'Entité Inconnue'}</span>
+        <span style={styles.messageTime}>
+          {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+        </span>
       </div>
+      <div style={styles.npcContent}>{parseNarrative(message.content)}</div>
     </div>
   );
 }
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+const Chat: React.FC = () => {
+  const [sessionId] = useState<string>(() => crypto.randomUUID());
+
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: crypto.randomUUID(),
+      role: 'director',
+      content: WELCOME_MESSAGE,
+      timestamp: new Date(),
+    },
+  ]);
+
+  const [inputValue, setInputValue] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeLocation, setActiveLocation] = useState('Atlantica');
+  const [activeNPC, setActiveNPC] = useState<string | null>(null);
+  const [sessionStats, setSessionStats] = useState<SessionStats>({ PE: 0, XP: 0, PR: 0 });
+  const [entities, setEntities] = useState<Entity[]>([]);
+  const [quests, setQuests] = useState<Quest[]>([]);
+  const [lorebookOpen, setLorebookOpen] = useState<LorebookOpen>({
+    divinites: true,
+    factions: false,
+    puissances: false,
+  });
+  const [selectedFaction, setSelectedFaction] = useState<string | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
+
+  const toggleLorebook = useCallback(
+    (key: keyof LorebookOpen) => {
+      setLorebookOpen((prev) => ({ ...prev, [key]: !prev[key] }));
+    },
+    []
+  );
+
+  const sendMessage = useCallback(async () => {
+    const trimmed = inputValue.trim();
+    if (!trimmed || isLoading) return;
+
+    const playerMsg: Message = {
+      id: crypto.randomUUID(),
+      role: 'player',
+      content: trimmed,
+      timestamp: new Date(),
+    };
+
+    setMessages((prev) => [...prev, playerMsg]);
+    setInputValue('');
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('http://localhost:8000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          player_input: trimmed,
+          universe_id: 'f0000000-0000-0000-0000-000000000001',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data: {
+        character_output?: string;
+        world_event?: string;
+        session_id?: string;
+        npc_name?: string;
+        location?: string;
+      } = await response.json();
+
+      const newMessages: Message[] = [];
+
+      if (data.world_event) {
+        newMessages.push({
+          id: crypto.randomUUID(),
+          role: 'director',
+          content: data.world_event,
+          timestamp: new Date(),
+        });
+      }
+
+      if (data.character_output) {
+        const npcName = data.npc_name ?? activeNPC ?? 'Le Monde';
+        newMessages.push({
+          id: crypto.randomUUID(),
+          role: 'npc',
+          content: data.character_output,
+          npcName,
+          timestamp: new Date(),
+        });
+
+        if (data.npc_name) {
+          setActiveNPC(data.npc_name);
+          setEntities((prev) => {
+            const exists = prev.find((e) => e.name === data.npc_name);
+            if (!exists) {
+              return [...prev, { name: data.npc_name!, type: 'PNJ', status: 'Actif' }];
+            }
+            return prev;
+          });
+        }
+      }
+
+      if (data.location) {
+        setActiveLocation(data.location);
+      }
+
+      setMessages((prev) => [...prev, ...newMessages]);
+    } catch (err) {
+      const errorMsg: Message = {
+        id: crypto.randomUUID(),
+        role: 'director',
+        content:
+          '**[ERREUR DE CONNEXION]** Les fils du destin sont rompus. Vérifiez la connexion au serveur Fallen.',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+      inputRef.current?.focus();
+    }
+  }, [inputValue, isLoading, sessionId, activeNPC]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  return (
+    <>
+      <style>{globalStyles}</style>
+      <div style={styles.root}>
+        {/* ── LEFT SIDEBAR ── */}
+        <aside style={styles.leftSidebar}>
+          <FallenLogo />
+
+          <WorldEventTicker events={CURRENT_EVENTS} />
+
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>LOCALISATION ACTIVE</div>
+            <div style={styles.locationBox}>
+              <span style={styles.locationIcon}>⚑</span>
+              <span style={styles.locationName}>{activeLocation}</span>
+            </div>
+          </div>
+
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>STATISTIQUES DE SESSION</div>
+            <div style={styles.statsRow}>
+              <StatBadge label="PE" value={sessionStats.PE} />
+              <StatBadge label="XP" value={sessionStats.XP} />
+              <StatBadge label="PR" value={sessionStats.PR} />
+            </div>
+          </div>
+
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>SESSION</div>
+            <div style={styles.sessionIdText}>
+              {sessionId.slice(0, 8).toUpperCase()}...
+            </div>
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          <div style={styles.sideFooter}>
+            <span style={styles.footerGlyph}>⚕</span> Fallen Universe v4.0
+          </div>
+        </aside>
+
+        {/* ── CENTER PANEL ── */}
+        <main style={styles.centerPanel}>
+          {/* Context banner */}
+          <div style={styles.contextBanner}>
+            <span style={styles.contextIcon}>◉</span>
+            <span style={styles.contextText}>
+              {activeNPC
+                ? `Parlant avec ${activeNPC} — ${activeLocation}`
+                : `Explorant ${activeLocation} — Aucun PNJ actif`}
+            </span>
+            <div style={styles.contextDot} />
+          </div>
+
+          {/* Message stream */}
+          <div style={styles.messageStream} className="fallen-scroll">
+            {messages.map((msg) => (
+              <MessageBubble key={msg.id} message={msg} />
+            ))}
+            {isLoading && <LoadingSpinner />}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input area */}
+          <div style={styles.inputArea}>
+            <div style={styles.inputWrapper}>
+              <textarea
+                ref={inputRef}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Que faites-vous dans le monde de Fallen?"
+                style={styles.textInput}
+                className="fallen-textarea"
+                rows={2}
+                disabled={isLoading}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={isLoading || !inputValue.trim()}
+                style={{
+                  ...styles.sendButton,
+                  opacity: isLoading || !inputValue.trim() ? 0.5 : 1,
+                  cursor: isLoading || !inputValue.trim() ? 'not-allowed' : 'pointer',
+                }}
+                className="fallen-send-btn"
+              >
+                <span style={styles.sendIcon}>⚔</span>
+                <span>ENVOYER</span>
+              </button>
+            </div>
+            <div style={styles.inputHint}>
+              ↵ Entrée pour envoyer · Shift+↵ pour une nouvelle ligne
+            </div>
+          </div>
+        </main>
+
+        {/* ── RIGHT SIDEBAR ── */}
+        <aside style={styles.rightSidebar}>
+          {/* Faction badges */}
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>CHOISIR UNE FACTION</div>
+            <div style={styles.factionGrid}>
+              {FACTIONS.map((f) => (
+                <FactionBadge
+                  key={f}
+                  name={f}
+                  selected={selectedFaction === f}
+                  onClick={() => setSelectedFaction((prev) => (prev === f ? null : f))}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.lorebookDivider} />
+
+          {/* Lorebook */}
+          <div style={styles.lorebookSection}>
+            <div style={styles.lorebookHeader}>
+              <span style={styles.lorebookIcon}>📖</span> GRIMOIRE
+            </div>
+
+            <AccordionSection
+              title="Les 12 Divinités"
+              open={lorebookOpen.divinites}
+              onToggle={() => toggleLorebook('divinites')}
+            >
+              {DIVINITES.map((d) => (
+                <div key={d.name} style={styles.diviniteRow}>
+                  <span style={styles.diviniteName}>{d.name}</span>
+                  <span style={styles.diviniteDomain}>{d.domain}</span>
+                </div>
+              ))}
+            </AccordionSection>
+
+            <AccordionSection
+              title="Les Factions"
+              open={lorebookOpen.factions}
+              onToggle={() => toggleLorebook('factions')}
+            >
+              <div style={styles.factionList}>
+                {FACTIONS.map((f) => (
+                  <span key={f} style={styles.factionListItem}>
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </AccordionSection>
+
+            <AccordionSection
+              title="Grandes Puissances"
+              open={lorebookOpen.puissances}
+              onToggle={() => toggleLorebook('puissances')}
+            >
+              {GRANDES_PUISSANCES.map((p) => (
+                <div key={p.rank} style={styles.puissanceRow}>
+                  <span style={styles.puissanceRank}>#{p.rank}</span>
+                  <div style={styles.puissanceInfo}>
+                    <span style={styles.puissanceName}>{p.name}</span>
+                    <span style={styles.puissanceTitle}>{p.title}</span>
+                    <span style={styles.puissanceFaction}>{p.faction}</span>
+                  </div>
+                </div>
+              ))}
+            </AccordionSection>
+          </div>
+
+          <div style={styles.lorebookDivider} />
+
+          {/* Entity Ledger */}
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>ENTITÉS RENCONTRÉES</div>
+            {entities.length === 0 ? (
+              <div style={styles.emptyState}>Aucune entité rencontrée</div>
+            ) : (
+              entities.map((e, i) => (
+                <div key={i} style={styles.entityRow}>
+                  <span style={styles.entityDot} />
+                  <span style={styles.entityName}>{e.name}</span>
+                  <span style={styles.entityType}>{e.type}</span>
+                  <span
+                    style={{
+                      ...styles.entityStatus,
+                      color: e.status === 'Actif' ? '#c9a84c' : '#6b21a8',
+                    }}
+                  >
+                    {e.status}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div style={styles.lorebookDivider} />
+
+          {/* Quest Log */}
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>JOURNAL DE QUÊTES</div>
+            {quests.length === 0 ? (
+              <div style={styles.emptyState}>Aucune quête active</div>
+            ) : (
+              quests.map((q) => (
+                <div key={q.id} style={styles.questRow}>
+                  <span
+                    style={{
+                      ...styles.questStatusDot,
+                      background:
+                        q.status === 'active'
+                          ? '#c9a84c'
+                          : q.status === 'completed'
+                          ? '#22c55e'
+                          : '#dc2626',
+                    }}
+                  />
+                  <span style={styles.questTitle}>{q.title}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+      </div>
+    </>
+  );
+};
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const styles: Record<string, React.CSSProperties> = {
+  root: {
+    display: 'flex',
+    height: '100vh',
+    width: '100vw',
+    background: '#0a0a0f',
+    color: '#e2e0d6',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    overflow: 'hidden',
+    position: 'fixed',
+    top: 0,
+    left: 0,
+  },
+
+  // ── Left Sidebar
+  leftSidebar: {
+    width: '25%',
+    minWidth: 220,
+    maxWidth: 320,
+    background: '#0d0b18',
+    borderRight: '1px solid #1e1b2e',
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '0',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    boxShadow: '2px 0 20px #00000060',
+    flexShrink: 0,
+  },
+
+  logoContainer: {
+    padding: '28px 20px 16px',
+    borderBottom: '1px solid #1e1b2e',
+    textAlign: 'center',
+  },
+
+  fallenTitle: {
+    fontSize: '42px',
+    fontWeight: 900,
+    letterSpacing: '0.35em',
+    color: '#c9a84c',
+    textShadow: '0 0 30px #c9a84c80, 0 0 60px #c9a84c30',
+    lineHeight: 1,
+    animation: 'fallenPulse 3s ease-in-out infinite',
+  },
+
+  arcSubtitle: {
+    fontSize: '10px',
+    letterSpacing: '0.2em',
+    color: '#6b21a8',
+    textTransform: 'uppercase',
+    marginTop: '6px',
+    fontWeight: 500,
+  },
+
+  logoDivider: {
+    height: '1px',
+    background: 'linear-gradient(90deg, transparent, #c9a84c60, transparent)',
+    marginTop: '16px',
+  },
+
+  tickerWrapper: {
+    padding: '16px 20px',
+    borderBottom: '1px solid #1e1b2e',
+    minHeight: '90px',
+  },
+
+  tickerLabel: {
+    fontSize: '9px',
+    letterSpacing: '0.2em',
+    color: '#4a4570',
+    marginBottom: '8px',
+    textTransform: 'uppercase',
+    fontWeight: 600,
+  },
+
+  tickerText: {
+    fontSize: '12px',
+    color: '#b8b0d0',
+    lineHeight: 1.5,
+    minHeight: '36px',
+  },
+
+  tickerDots: {
+    display: 'flex',
+    gap: '5px',
+    marginTop: '10px',
+  },
+
+  tickerDot: {
+    width: '5px',
+    height: '5px',
+    borderRadius: '50%',
+    transition: 'background 0.4s ease',
+  },
+
+  sideSection: {
+    padding: '16px 20px',
+    borderBottom: '1px solid #1e1b2e',
+  },
+
+  sideSectionLabel: {
+    fontSize: '9px',
+    letterSpacing: '0.2em',
+    color: '#4a4570',
+    marginBottom: '10px',
+    textTransform: 'uppercase',
+    fontWeight: 600,
+  },
+
+  locationBox: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    padding: '8px 12px',
+  },
+
+  locationIcon: {
+    color: '#c9a84c',
+    fontSize: '14px',
+  },
+
+  locationName: {
+    color: '#e2e0d6',
+    fontSize: '13px',
+    fontWeight: 500,
+  },
+
+  statsRow: {
+    display: 'flex',
+    gap: '8px',
+  },
+
+  statBadge: {
+    flex: 1,
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    padding: '8px 6px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '3px',
+  },
+
+  statLabel: {
+    fontSize: '9px',
+    color: '#6b21a8',
+    letterSpacing: '0.1em',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  },
+
+  statValue: {
+    fontSize: '18px',
+    color: '#c9a84c',
+    fontWeight: 700,
+    lineHeight: 1,
+  },
+
+  sessionIdText: {
+    fontSize: '11px',
+    color: '#4a4570',
+    fontFamily: 'monospace',
+    letterSpacing: '0.1em',
+  },
+
+  sideFooter: {
+    padding: '14px 20px',
+    fontSize: '10px',
+    color: '#2a2440',
+    textAlign: 'center',
+    letterSpacing: '0.1em',
+    borderTop: '1px solid #1e1b2e',
+  },
+
+  footerGlyph: {
+    color: '#c9a84c50',
+  },
+
+  // ── Center Panel
+  centerPanel: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    background: '#0a0a0f',
+    position: 'relative',
+    minWidth: 0,
+  },
+
+  contextBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 20px',
+    background: '#0d0b18',
+    borderBottom: '1px solid #1e1b2e',
+    flexShrink: 0,
+  },
+
+  contextIcon: {
+    color: '#6b21a8',
+    fontSize: '14px',
+  },
+
+  contextText: {
+    fontSize: '12px',
+    color: '#8b84a8',
+    flex: 1,
+    letterSpacing: '0.05em',
+  },
+
+  contextDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    background: '#22c55e',
+    boxShadow: '0 0 8px #22c55e',
+    animation: 'contextPulse 2s ease-in-out infinite',
+  },
+
+  messageStream: {
+    flex: 1,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    padding: '24px 20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+  },
+
+  // Director message
+  directorMessage: {
+    background: 'linear-gradient(135deg, #0f0d24 0%, #12102a 100%)',
+    border: '1px solid #2a2440',
+    borderLeft: '3px solid #6b21a8',
+    borderRadius: '8px',
+    padding: '16px 18px',
+    boxShadow: '0 4px 20px #00000040, inset 0 1px 0 #ffffff08',
+  },
+
+  directorHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginBottom: '10px',
+  },
+
+  directorIcon: {
+    color: '#6b21a8',
+    fontSize: '12px',
+  },
+
+  directorLabel: {
+    fontSize: '9px',
+    letterSpacing: '0.25em',
+    color: '#6b21a8',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  },
+
+  messageTime: {
+    marginLeft: 'auto',
+    fontSize: '10px',
+    color: '#3a3558',
+  },
+
+  directorContent: {
+    fontSize: '14px',
+    color: '#c8c3dc',
+    lineHeight: 1.8,
+    fontStyle: 'italic',
+  },
+
+  // Player message
+  playerMessageWrapper: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+  },
+
+  playerMessage: {
+    maxWidth: '65%',
+    background: 'linear-gradient(135deg, #1a120a 0%, #221700 100%)',
+    border: '1px solid #3a2800',
+    borderRight: '3px solid #c9a84c',
+    borderRadius: '8px',
+    padding: '12px 16px',
+    boxShadow: '0 4px 20px #00000040',
+  },
+
+  playerContent: {
+    fontSize: '14px',
+    color: '#e8d5a3',
+    lineHeight: 1.6,
+    fontWeight: 500,
+  },
+
+  playerMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '8px',
+    marginTop: '8px',
+  },
+
+  playerLabel: {
+    fontSize: '9px',
+    letterSpacing: '0.2em',
+    color: '#c9a84c80',
+    fontWeight: 700,
+  },
+
+  messageTimePlayer: {
+    fontSize: '10px',
+    color: '#3a2800',
+  },
+
+  // NPC message
+  npcMessage: {
+    background: 'linear-gradient(135deg, #080d0f 0%, #0a1012 100%)',
+    border: '1px solid #1a2a2e',
+    borderLeft: '3px solid #38bdf8',
+    borderRadius: '8px',
+    padding: '16px 18px',
+    maxWidth: '80%',
+    boxShadow: '0 4px 20px #00000040',
+  },
+
+  npcHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginBottom: '10px',
+  },
+
+  npcIcon: {
+    color: '#38bdf8',
+    fontSize: '12px',
+  },
+
+  npcName: {
+    fontSize: '11px',
+    letterSpacing: '0.15em',
+    color: '#38bdf8',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+  },
+
+  npcContent: {
+    fontSize: '14px',
+    color: '#d4d0dc',
+    lineHeight: 1.75,
+  },
+
+  // Spinner
+  spinnerWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '14px',
+    padding: '16px 20px',
+    background: '#0d0b18',
+    border: '1px solid #2a2440',
+    borderRadius: '8px',
+    borderLeft: '3px solid #dc2626',
+  },
+
+  spinner: {
+    width: '20px',
+    height: '20px',
+    border: '2px solid #2a2440',
+    borderTop: '2px solid #c9a84c',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+    flexShrink: 0,
+  },
+
+  spinnerText: {
+    fontSize: '13px',
+    color: '#8b84a8',
+    fontStyle: 'italic',
+    letterSpacing: '0.05em',
+  },
+
+  // Input area
+  inputArea: {
+    padding: '16px 20px 20px',
+    background: '#0d0b18',
+    borderTop: '1px solid #1e1b2e',
+    flexShrink: 0,
+  },
+
+  inputWrapper: {
+    display: 'flex',
+    gap: '12px',
+    alignItems: 'flex-end',
+  },
+
+  textInput: {
+    flex: 1,
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '8px',
+    color: '#e2e0d6',
+    fontSize: '14px',
+    padding: '12px 16px',
+    resize: 'none',
+    outline: 'none',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    lineHeight: 1.5,
+    transition: 'border-color 0.2s, box-shadow 0.2s',
+  },
+
+  sendButton: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '4px',
+    background: 'linear-gradient(135deg, #7c3aed, #6b21a8)',
+    border: '1px solid #7c3aed',
+    borderRadius: '8px',
+    color: '#e2e0d6',
+    fontSize: '10px',
+    fontWeight: 700,
+    letterSpacing: '0.15em',
+    padding: '12px 18px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    flexShrink: 0,
+    minWidth: '80px',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+  },
+
+  sendIcon: {
+    fontSize: '18px',
+  },
+
+  inputHint: {
+    fontSize: '10px',
+    color: '#2a2440',
+    marginTop: '8px',
+    textAlign: 'right',
+    letterSpacing: '0.05em',
+  },
+
+  // ── Right Sidebar
+  rightSidebar: {
+    width: '25%',
+    minWidth: 220,
+    maxWidth: 340,
+    background: '#0d0b18',
+    borderLeft: '1px solid #1e1b2e',
+    display: 'flex',
+    flexDirection: 'column',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    boxShadow: '-2px 0 20px #00000060',
+    flexShrink: 0,
+  },
+
+  factionGrid: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '5px',
+  },
+
+  factionBadge: {
+    fontSize: '10px',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: '1px solid',
+    cursor: 'pointer',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    fontWeight: 500,
+    letterSpacing: '0.05em',
+    transition: 'all 0.2s',
+  },
+
+  lorebookDivider: {
+    height: '1px',
+    background: 'linear-gradient(90deg, transparent, #2a2440, transparent)',
+    margin: '0 20px',
+  },
+
+  lorebookSection: {
+    padding: '12px 0',
+  },
+
+  lorebookHeader: {
+    padding: '6px 20px 10px',
+    fontSize: '10px',
+    color: '#c9a84c',
+    letterSpacing: '0.2em',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+  },
+
+  lorebookIcon: {
+    marginRight: '4px',
+  },
+
+  accordionSection: {
+    borderBottom: '1px solid #1a1830',
+  },
+
+  accordionHeader: {
+    width: '100%',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px 20px',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#8b84a8',
+    fontFamily: "'Inter', 'Segoe UI', sans-serif",
+    transition: 'background 0.2s',
+  },
+
+  accordionTitle: {
+    fontSize: '11px',
+    letterSpacing: '0.1em',
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    color: '#8b84a8',
+  },
+
+  accordionBody: {
+    padding: '0 20px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+
+  diviniteRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    padding: '5px 0',
+    borderBottom: '1px solid #12102a',
+  },
+
+  diviniteName: {
+    fontSize: '12px',
+    color: '#c9a84c',
+    fontWeight: 600,
+  },
+
+  diviniteDomain: {
+    fontSize: '10px',
+    color: '#4a4570',
+    textAlign: 'right',
+    maxWidth: '55%',
+    lineHeight: 1.3,
+  },
+
+  factionList: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '5px',
+  },
+
+  factionListItem: {
+    fontSize: '11px',
+    color: '#8b84a8',
+    background: '#12102a',
+    padding: '3px 8px',
+    borderRadius: '3px',
+    border: '1px solid #2a2440',
+  },
+
+  puissanceRow: {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'flex-start',
+    padding: '6px 0',
+    borderBottom: '1px solid #12102a',
+  },
+
+  puissanceRank: {
+    fontSize: '14px',
+    fontWeight: 800,
+    color: '#c9a84c40',
+    minWidth: '24px',
+    lineHeight: 1.2,
+  },
+
+  puissanceInfo: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+  },
+
+  puissanceName: {
+    fontSize: '11px',
+    color: '#e2e0d6',
+    fontWeight: 600,
+    lineHeight: 1.3,
+  },
+
+  puissanceTitle: {
+    fontSize: '10px',
+    color: '#6b21a8',
+    lineHeight: 1.3,
+    fontStyle: 'italic',
+  },
+
+  puissanceFaction: {
+    fontSize: '9px',
+    color: '#4a4570',
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+  },
+
+  entityRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '7px',
+    padding: '5px 0',
+    borderBottom: '1px solid #12102a',
+  },
+
+  entityDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '50%',
+    background: '#c9a84c',
+    flexShrink: 0,
+    boxShadow: '0 0 6px #c9a84c',
+  },
+
+  entityName: {
+    fontSize: '12px',
+    color: '#e2e0d6',
+    flex: 1,
+    fontWeight: 500,
+  },
+
+  entityType: {
+    fontSize: '10px',
+    color: '#4a4570',
+    letterSpacing: '0.05em',
+  },
+
+  entityStatus: {
+    fontSize: '9px',
+    fontWeight: 700,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
+  },
+
+  questRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '5px 0',
+    borderBottom: '1px solid #12102a',
+  },
+
+  questStatusDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+
+  questTitle: {
+    fontSize: '12px',
+    color: '#b8b0d0',
+  },
+
+  emptyState: {
+    fontSize: '11px',
+    color: '#2a2440',
+    fontStyle: 'italic',
+    padding: '4px 0',
+  },
+};
+
+// ─── Global CSS (keyframes + scrollbar + focus styles) ──────────────────────
+
+const globalStyles = `
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: #0a0a0f;
+    overflow: hidden;
+  }
+
+  @keyframes fallenPulse {
+    0%, 100% {
+      text-shadow: 0 0 30px #c9a84c80, 0 0 60px #c9a84c30;
+    }
+    50% {
+      text-shadow: 0 0 50px #c9a84ccc, 0 0 100px #c9a84c60, 0 0 140px #c9a84c20;
+    }
+  }
+
+  @keyframes spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  @keyframes contextPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px #22c55e; }
+    50%       { opacity: 0.4; box-shadow: 0 0 3px #22c55e; }
+  }
+
+  .fallen-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+  .fallen-scroll::-webkit-scrollbar-track {
+    background: #0a0a0f;
+  }
+  .fallen-scroll::-webkit-scrollbar-thumb {
+    background: #2a2440;
+    border-radius: 2px;
+  }
+  .fallen-scroll::-webkit-scrollbar-thumb:hover {
+    background: #6b21a8;
+  }
+
+  .fallen-textarea:focus {
+    border-color: #6b21a8 !important;
+    box-shadow: 0 0 0 2px #6b21a820 !important;
+  }
+  .fallen-textarea::placeholder {
+    color: #3a3558;
+  }
+
+  .fallen-send-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #8b5cf6, #7c3aed) !important;
+    box-shadow: 0 0 20px #7c3aed60 !important;
+    transform: translateY(-1px);
+  }
+  .fallen-send-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+`;
+
+export default Chat;
