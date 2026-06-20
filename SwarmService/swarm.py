@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import List, Dict, Any, TypedDict
+from typing import List, Dict, Any, TypedDict, Optional
 from langgraph.graph import StateGraph, END
 
 # Import custom modules
@@ -13,7 +13,9 @@ from db import (
     update_session_state,
     get_chat_history,
     push_chat_message,
-    sync_ledger_transaction
+    sync_ledger_transaction,
+    get_entities_by_type,
+    get_universe
 )
 from agents import (
     run_scanner_agent,
@@ -31,9 +33,9 @@ logger = logging.getLogger("swarm")
 class SwarmState(TypedDict):
     session_id: str
     universe_id: str
-    char_id: int
-    char_name: str
-    char_personality: str
+    char_id: Optional[int]
+    char_name: Optional[str]
+    char_personality: Optional[str]
     player_input: str
     
     extracted_keywords: List[str]
@@ -89,7 +91,29 @@ def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
     # 3. Format lore
     lore_str = "\n".join([f"[{entry['title']}]: {entry['content']}" for entry in state.get("retrieved_lore", [])])
     
+    # 4. Fetch universe setting details
+    universe_data = get_universe(universe_id)
+    universe_desc = ""
+    if universe_data:
+        universe_desc = f"UNIVERSE: {universe_data.get('name', 'Unknown')}\nDESCRIPTION: {universe_data.get('description', '')}"
+    else:
+        universe_desc = "UNIVERSE: Unknown"
+
+    # 5. Fetch active quests
+    active_quests = get_entities_by_type(universe_id, "QUEST")
+    quests_str = "\n".join([f"- {q['name']}: {q['properties']}" for q in active_quests])
+    if not quests_str:
+        quests_str = "No active quests."
+
+    # 6. Companion context is optional
+    companion_str = ""
+    if state.get("char_name"):
+        companion_str = f"ACTIVE COMPANION:\nName: {state['char_name']}\nPersonality: {state.get('char_personality', '')}\n\n"
+
     master_prompt = (
+        f"{companion_str}"
+        f"UNIVERSE SETTING:\n{universe_desc}\n\n"
+        f"ACTIVE QUESTS:\n{quests_str}\n\n"
         f"LOREBOOK DETAILS:\n{lore_str}\n\n"
         f"TIMELINE CONTEXT:\n{timeline_str}\n\n"
         f"RECENT HISTORY:\n{history_str}\n\n"
@@ -97,6 +121,7 @@ def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
     )
     
     return {"master_prompt": master_prompt, "timeline_context": timeline_str}
+
 
 def run_narrative_director(state: SwarmState) -> Dict[str, Any]:
     """Director Node: Simulates scene action and handles dynamic item/NPC generation (Forge)."""
@@ -165,20 +190,54 @@ def run_continuity_critic(state: SwarmState) -> Dict[str, Any]:
 def run_persona_emulator(state: SwarmState) -> Dict[str, Any]:
     """Persona Node: Emulates character voice over approved narrative outcome."""
     logger.info("Running Persona Emulator Node...")
-    char_name = state.get("char_name", "Companion")
-    char_personality = state.get("char_personality", "Friendly")
+    char_name = state.get("char_name")
+    char_personality = state.get("char_personality", "")
     outcome = state["director_prose"]
     player_input = state["player_input"]
     
-    dialogue = run_persona_agent(char_name, char_personality, outcome, player_input)
-    return {"final_dialogue": dialogue}
+    if char_name:
+        logger.info(f"Emulating companion character: {char_name}")
+        dialogue = run_persona_agent(char_name, char_personality, outcome, player_input)
+        return {"final_dialogue": dialogue}
+        
+    # If no companion character is provided, check if an NPC is speaking in the Director's output
+    universe_id = state.get("universe_id", "00000000-0000-0000-0000-000000000001")
+    npcs = get_entities_by_type(universe_id, "NPC")
+    
+    prose_lower = outcome.lower()
+    speaking_npc = None
+    
+    for npc in npcs:
+        npc_name = npc["name"]
+        if npc_name.lower() in prose_lower:
+            # Does the prose contain quotes or indicators of dialogue/speech?
+            dialogue_indicators = ["say", "yell", "whisper", "shout", "call", "ask", "tell", "speak", "voice", "mutter", "cry"]
+            has_dialogue = '"' in outcome or "'" in outcome or any(ind in prose_lower for ind in dialogue_indicators)
+            if has_dialogue:
+                speaking_npc = npc
+                break
+                
+    if speaking_npc:
+        npc_name = speaking_npc["name"]
+        npc_props = speaking_npc.get("properties", {})
+        npc_personality = npc_props.get("description", npc_props.get("personality", "Neutral NPC"))
+        logger.info(f"Dynamic NPC speaker detected: {npc_name}. Emulating NPC persona...")
+        dialogue = run_persona_agent(npc_name, npc_personality, outcome, player_input)
+        return {"final_dialogue": dialogue}
+        
+    logger.info("No active companion or speaking NPC. Bypassing persona emulation.")
+    return {"final_dialogue": ""}
 
 def run_event_chronicler(state: SwarmState) -> Dict[str, Any]:
     """Chronicler Node: Synthesizes final roleplay exchange into a structured update."""
     logger.info("Running Event Chronicler Node...")
     player_input = state["player_input"]
-    final_output = f"{state['director_prose']} \n {state['final_dialogue']}"
-    
+    final_dialogue = state.get("final_dialogue", "")
+    if final_dialogue:
+        final_output = f"{state['director_prose']} \n {final_dialogue}"
+    else:
+        final_output = state['director_prose']
+        
     res = run_chronicler_agent(player_input, final_output)
     return {
         "extracted_summary": res.get("timeline_summary", "Interaction complete."),
@@ -193,8 +252,13 @@ def run_ledger_guard(state: SwarmState) -> Dict[str, Any]:
     summary = state["extracted_summary"]
     deltas = state["state_deltas"]
     player_input = state["player_input"]
-    assistant_output = f"{state['director_prose']} {state['final_dialogue']}"
     
+    final_dialogue = state.get("final_dialogue", "")
+    if final_dialogue:
+        assistant_output = f"{state['director_prose']} {final_dialogue}"
+    else:
+        assistant_output = state['director_prose']
+        
     # Run the ledger synchronization in a single PostgreSQL transaction
     # with an advisory lock.
     success = sync_ledger_transaction(

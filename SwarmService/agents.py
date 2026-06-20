@@ -78,7 +78,9 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
         player_action_part = content_lower.split("player action:")[-1] if "player action:" in content_lower else content_lower
         
         # Simulating contradictions based on player input
-        if "deceased" in player_action_part or "dead" in player_action_part:
+        if "sentinel vael" in player_action_part:
+            world_event = "Sentinel Vael stands guard at the gates of the keep. Sentinel Vael says: 'Who goes there?'"
+        elif "deceased" in player_action_part or "dead" in player_action_part:
             world_event = "The dead soldier suddenly stands up and speaks. The deceased NPC commands the squad."
         elif "impossible" in player_action_part or "moon" in player_action_part:
             world_event = "The character leaps high, escaping earth's grasp entirely and landing on the lunar surface in a single bound."
@@ -92,7 +94,7 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
         })
         
     # 3. Continuity Critic Mock
-    elif "continuity inspector" in system_prompt.lower() or "critic" in system_prompt.lower():
+    elif "continuity inspector" in system_prompt.lower() or "the critic" in system_prompt.lower():
         # If the narrative draft contains contradiction indicators, reject it
         if "dead soldier" in content_lower or "deceased npc" in content_lower:
             return json.dumps({
@@ -113,15 +115,24 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
     # 4. Persona Agent Mock
     elif "persona emulation" in system_prompt.lower() or "chatbot" in system_prompt.lower():
         char = "Character"
-        if "garen" in content_lower:
+        sys_lower = system_prompt.lower()
+        if "garen" in sys_lower or "garen" in content_lower:
             char = "Garen"
-        elif "ahri" in content_lower:
+        elif "ahri" in sys_lower or "ahri" in content_lower:
             char = "Ahri"
-        elif "darius" in content_lower:
+        elif "darius" in sys_lower or "darius" in content_lower:
             char = "Darius"
+        elif "sentinel vael" in sys_lower or "sentinel vael" in content_lower:
+            char = "Sentinel Vael"
+            
+        if char == "Sentinel Vael":
+            return json.dumps({
+                "character_output": f"*{char} frowns.* 'This keep is off-limits.'"
+            })
         return json.dumps({
             "character_output": f"*{char} stands ready.* 'For my nation! I will face whatever challenges you present.'"
         })
+
         
     # 5. Chronicler Agent Mock
     elif "event extraction" in system_prompt.lower() or "chronicler" in system_prompt.lower():

@@ -180,3 +180,46 @@ VALUES
 ('00000000-0000-0000-0000-000000000001', 'Demacian Steel', ARRAY['garen', 'demacia', 'steel', 'petricite', 'armor'], 'Demacian steel is forged using special alloys and petricite, making it highly resistant to magic and spellcasting.'),
 ('00000000-0000-0000-0000-000000000001', 'Noxian Border', ARRAY['darius', 'noxus', 'border', 'military'], 'The Noxian border is heavily fortified, guarded by warbands led by figures like Darius, the Hand of Noxus.')
 ON CONFLICT DO NOTHING;
+
+-- 21. Seed the Fallen Universe
+INSERT INTO yinyang.universes (universe_id, name, description)
+VALUES ('f0000000-0000-0000-0000-000000000001', 'Fallen', 'A dark, ruined world consumed by the Void and littered with remnants of a forgotten golden age.')
+ON CONFLICT (universe_id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description;
+
+-- 22. Seed starting Lorebook entries for the Fallen universe
+INSERT INTO yinyang.lorebook_entries (entry_id, universe_id, title, keywords, content)
+VALUES
+('f0000000-0000-0000-0000-000000000100', 'f0000000-0000-0000-0000-000000000001', 'The Great Fall', ARRAY['fall', 'apocalypse', 'history', 'cataclysm'], 'The cataclysmic event that shattered the once-glorious empire, plunging the world into darkness and ruin.'),
+('f0000000-0000-0000-0000-000000000101', 'f0000000-0000-0000-0000-000000000001', 'The Void Corruption', ARRAY['void', 'corruption', 'decay', 'darkness'], 'An invasive, alien energy leaking from cosmic rifts, warping the land, wildlife, and sanity of survivors.'),
+('f0000000-0000-0000-0000-000000000102', 'f0000000-0000-0000-0000-000000000001', 'Obsidian Core', ARRAY['obsidian', 'core', 'magic', 'energy', 'power'], 'A mysterious, dark crystalline structure buried deep beneath the earth, pulsing with unstable volatile power.')
+ON CONFLICT (entry_id) DO UPDATE SET
+    universe_id = EXCLUDED.universe_id,
+    title = EXCLUDED.title,
+    keywords = EXCLUDED.keywords,
+    content = EXCLUDED.content;
+
+-- 23. Seed starting Entities for the Fallen universe
+-- 23a. Locations first (so NPCs can reference them)
+INSERT INTO yinyang.entities (entity_id, universe_id, entity_type, name, properties, current_location_id)
+VALUES
+('f0000000-0000-0000-0000-000000000200', 'f0000000-0000-0000-0000-000000000001', 'LOCATION', 'Shattered Keep', '{"description": "A crumbling fortress atop a jagged cliff, once the bastion of the realm."}'::jsonb, NULL),
+('f0000000-0000-0000-0000-000000000201', 'f0000000-0000-0000-0000-000000000001', 'LOCATION', 'Crimson Wastes', '{"description": "A vast desert of red sand tainted by Void energies, home to dangerous mutants."}'::jsonb, NULL)
+ON CONFLICT (entity_id) DO UPDATE SET
+    universe_id = EXCLUDED.universe_id,
+    entity_type = EXCLUDED.entity_type,
+    name = EXCLUDED.name,
+    properties = EXCLUDED.properties,
+    current_location_id = EXCLUDED.current_location_id;
+
+-- 23b. NPCs referencing the seeded locations
+INSERT INTO yinyang.entities (entity_id, universe_id, entity_type, name, properties, current_location_id)
+VALUES
+('f0000000-0000-0000-0000-000000000300', 'f0000000-0000-0000-0000-000000000001', 'NPC', 'Sentinel Vael', '{"description": "A battle-scarred warrior patrolling the Shattered Keep, holding onto old oaths.", "faction": "Sentinels"}'::jsonb, 'f0000000-0000-0000-0000-000000000200'),
+('f0000000-0000-0000-0000-000000000301', 'f0000000-0000-0000-0000-000000000001', 'NPC', 'The Obsidian Golem', '{"description": "A towering construct powered by the Obsidian Core, wandering the Crimson Wastes."}'::jsonb, 'f0000000-0000-0000-0000-000000000201')
+ON CONFLICT (entity_id) DO UPDATE SET
+    universe_id = EXCLUDED.universe_id,
+    entity_type = EXCLUDED.entity_type,
+    name = EXCLUDED.name,
+    properties = EXCLUDED.properties,
+    current_location_id = EXCLUDED.current_location_id;
+

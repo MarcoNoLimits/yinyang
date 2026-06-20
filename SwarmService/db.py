@@ -357,3 +357,38 @@ def sync_ledger_transaction(universe_id: str, session_id: str, summary: str, del
     except Exception as e:
         logger.error(f"Error in sync_ledger_transaction: {e}")
         return False
+
+def get_entities_by_type(universe_id: str, entity_type: str) -> list:
+    """Retrieves all entities of a specific type in a universe."""
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT name, properties FROM yinyang.entities WHERE universe_id = %s AND entity_type = %s",
+                    (universe_id, entity_type)
+                )
+                return list(cur.fetchall())
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error getting entities by type: {e}")
+        return []
+
+def get_universe(universe_id: str) -> dict:
+    """Retrieves universe details by ID."""
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT name, description FROM yinyang.universes WHERE universe_id = %s",
+                    (universe_id,)
+                )
+                return cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error getting universe details: {e}")
+        return None
+

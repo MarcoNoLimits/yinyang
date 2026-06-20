@@ -66,6 +66,7 @@ const UserCharacterSelection = ({
           username: profile.username,
           userId: profile.user_id,
         });
+        navigate("/chat");
 
       } catch (err) {
         console.error("Error checking session:", err);
@@ -77,21 +78,12 @@ const UserCharacterSelection = ({
   }, [navigate, setUser]);
 
 
-
-
   return (
-    <div className="bg-[#212121] flex flex-col min-h-screen px-4 sm:px-6 md:px-10 lg:px-40">
-      <UserNavBar
-        username={user.username}
-        chatList={chatList}
-      />
-      <MainPage
-        addChat={addChat}
-        chatList={chatList}
-        username={user.username}
-        userId={user.userId}
-      />
-      <Footer />
+    <div className="bg-[#05070d] flex h-screen w-screen items-center justify-center text-cyan-500 font-mono text-sm">
+      <div className="flex flex-col items-center space-y-4">
+        <div className="h-6 w-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+        <span className="tracking-widest">VERIFYING OPERATOR ACCESS...</span>
+      </div>
     </div>
   );
 };

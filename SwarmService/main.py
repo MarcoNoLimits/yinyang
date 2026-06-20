@@ -3,6 +3,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from typing import Optional
+
 # Import compiled swarm engine
 from swarm import swarm_engine
 
@@ -24,10 +26,11 @@ app.add_middleware(
 class SwarmRequest(BaseModel):
     session_id: str
     universe_id: str = "00000000-0000-0000-0000-000000000001"
-    char_id: int
-    char_name: str
-    char_personality: str
+    char_id: Optional[int] = None
+    char_name: Optional[str] = None
+    char_personality: Optional[str] = None
     message: str
+
 
 @app.get("/")
 def health_check():
