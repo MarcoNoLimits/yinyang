@@ -89,15 +89,7 @@ const App: React.FC = () => {
           <Route path="/ResetPassword" element={<ResetPassword />} />
           <Route
             path="/"
-            element={
-              <UserCharacterSelection
-                chatList={chatList}
-                handleDelete={handleDelete}
-                addChat={addChat}
-                setUser={setUser}
-                user={user}
-              />
-            }
+            element={<Chat />}
           />
 
           <Route path="/UserDashboard/Profile" element={<Profile />} />

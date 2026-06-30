@@ -87,6 +87,7 @@ interface LorebookOpen {
   divinites: boolean;
   factions: boolean;
   puissances: boolean;
+  fiche: boolean;
 }
 
 // ─── Utility: Render narrative markdown ──────────────────────────────────────
@@ -301,7 +302,76 @@ function MessageBubble({ message }: { message: Message }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const Chat: React.FC = () => {
-  const [sessionId] = useState<string>(() => crypto.randomUUID());
+  interface RPSession {
+    id: string;
+    charName: string;
+    location: string;
+    activeNPC: string | null;
+    createdAt: string;
+    charId?: string;
+    chatType?: 'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO';
+    scenario?: string;
+    charLore?: string;
+    thumbnail?: string;
+    agentOverride?: string | null;
+  }
+
+  // Manage multiple RP sessions
+  const [sessions, setSessions] = useState<RPSession[]>(() => {
+    const saved = localStorage.getItem('fallen_rp_sessions');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch (e) {
+        console.error("Error parsing saved sessions", e);
+      }
+    }
+    const defaultSess: RPSession = {
+      id: crypto.randomUUID(),
+      charName: 'Adriel',
+      location: 'Atlantica',
+      activeNPC: null,
+      createdAt: new Date().toISOString(),
+      chatType: 'ROLEPLAY',
+      agentOverride: null
+    };
+    localStorage.setItem('fallen_rp_sessions', JSON.stringify([defaultSess]));
+    return [defaultSess];
+  });
+
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
+    const savedActive = localStorage.getItem('fallen_rp_active_session_id');
+    if (savedActive) return savedActive;
+    return sessions[0]?.id || crypto.randomUUID();
+  });
+
+  // Save current active session ID
+  useEffect(() => {
+    localStorage.setItem('fallen_rp_active_session_id', currentSessionId);
+  }, [currentSessionId]);
+
+  // Save sessions when they change
+  useEffect(() => {
+    localStorage.setItem('fallen_rp_sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  // Modal or panel state to create a new session
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newCharName, setNewCharName] = useState('');
+  const [newCharLocation, setNewCharLocation] = useState('Atlantica');
+  const [newCharSheet, setNewCharSheet] = useState('');
+  const [newCharAction, setNewCharAction] = useState('');
+  const [newScenario, setNewScenario] = useState('');
+  const [newCharLore, setNewCharLore] = useState('');
+  const [newCharThumbnail, setNewCharThumbnail] = useState('');
+  const [newChatType, setNewChatType] = useState<'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO'>('ROLEPLAY');
+
+  const updateSessionAgentOverride = useCallback((override: string | null) => {
+    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, agentOverride: override } : s));
+  }, [currentSessionId]);
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -320,14 +390,23 @@ const Chat: React.FC = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [quests, setQuests] = useState<Quest[]>([]);
   const [lorebookOpen, setLorebookOpen] = useState<LorebookOpen>({
-    divinites: true,
+    divinites: false,
     factions: false,
     puissances: false,
+    fiche: true,
   });
   const [selectedFaction, setSelectedFaction] = useState<string | null>(null);
 
+  // v3 state variables
+  const [activeRoute, setActiveRoute] = useState<string>('NARRATIVE_DIRECTOR');
+  const [scratchpad, setScratchpad] = useState<string>('');
+  const [showScratchpad, setShowScratchpad] = useState<boolean>(false);
+  const [characterState, setCharacterState] = useState<any>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const activeSess = sessions.find(s => s.id === currentSessionId);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -340,9 +419,87 @@ const Chat: React.FC = () => {
     []
   );
 
+  // Load message history from DB when switching sessions
+  useEffect(() => {
+    let active = true;
+    const loadHistory = async () => {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`http://localhost:8000/chat/${currentSessionId}/history`);
+        if (!response.ok) throw new Error("Failed to load history");
+        const data = await response.json();
+        if (active) {
+          // Set v3 state values
+          setActiveRoute(data.active_route || 'NARRATIVE_DIRECTOR');
+          setScratchpad(data.scratchpad || '');
+          setCharacterState(data.character_state || null);
+          
+          if (data.char_id) {
+            setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, charId: data.char_id } : s));
+          }
+
+          if (data.history && data.history.length > 0) {
+            const mapped = data.history.map((m: any) => ({
+              id: m.id || crypto.randomUUID(),
+              role: m.role,
+              content: m.content,
+              timestamp: new Date()
+            }));
+            setMessages(mapped);
+          } else {
+            // Initialize with welcome message
+            setMessages([
+              {
+                id: crypto.randomUUID(),
+                role: 'director',
+                content: WELCOME_MESSAGE,
+                timestamp: new Date(),
+              }
+            ]);
+          }
+        }
+      } catch (err) {
+        console.error("Error loading chat history:", err);
+        if (active) {
+          setActiveRoute('NARRATIVE_DIRECTOR');
+          setScratchpad('');
+          setCharacterState(null);
+          setMessages([
+            {
+              id: crypto.randomUUID(),
+              role: 'director',
+              content: WELCOME_MESSAGE,
+              timestamp: new Date(),
+            }
+          ]);
+        }
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadHistory();
+    return () => {
+      active = false;
+    };
+  }, [currentSessionId]);
+
+  // Sync active location/NPC when session or session list changes
+  useEffect(() => {
+    const currentSess = sessions.find(s => s.id === currentSessionId);
+    if (currentSess) {
+      setActiveLocation(currentSess.location);
+      setActiveNPC(currentSess.activeNPC);
+    }
+  }, [currentSessionId, sessions]);
+
   const sendMessage = useCallback(async () => {
     const trimmed = inputValue.trim();
     if (!trimmed || isLoading) return;
+
+    const activeSess = sessions.find(s => s.id === currentSessionId);
 
     const playerMsg: Message = {
       id: crypto.randomUUID(),
@@ -360,9 +517,13 @@ const Chat: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: currentSessionId,
           player_input: trimmed,
           universe_id: 'f0000000-0000-0000-0000-000000000001',
+          char_id: activeSess?.charId || null,
+          char_name: activeSess?.charName || null,
+          agent_override: activeSess?.agentOverride || null,
+          chat_type: activeSess?.chatType || 'ROLEPLAY'
         }),
       });
 
@@ -376,9 +537,42 @@ const Chat: React.FC = () => {
         session_id?: string;
         npc_name?: string;
         location?: string;
+        char_id?: string;
+        active_route?: string;
+        scratchpad?: string;
+        character_state?: any;
+        agent_metadata?: any;
       } = await response.json();
 
       const newMessages: Message[] = [];
+
+      // Update v3 state variables
+      setActiveRoute(data.active_route || 'NARRATIVE_DIRECTOR');
+      setScratchpad(data.scratchpad || '');
+      setCharacterState(data.character_state || null);
+
+      if (data.char_id) {
+        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, charId: data.char_id } : s));
+      }
+
+      // If Worldsmith generated points of interest or quests, show them in activeNPC or entities list
+      if (data.active_route === 'WORLDSMITH' && data.agent_metadata?.generated_entities) {
+        const entitiesList = data.agent_metadata.generated_entities;
+        setEntities(prev => {
+          let updated = [...prev];
+          entitiesList.forEach((e: any) => {
+            if (!updated.find(x => x.name === e.name)) {
+              updated.push({ name: e.name, type: e.entity_type, status: 'Découvert' });
+            }
+          });
+          return updated;
+        });
+      }
+
+      if (data.active_route === 'GRAND_ARBITER' && data.agent_metadata?.stat_checks) {
+        // Grand Arbiter combat checks can inject a small ruling card
+        logger.info("Grand Arbiter ruling received:", data.agent_metadata);
+      }
 
       if (data.world_event) {
         newMessages.push({
@@ -401,6 +595,7 @@ const Chat: React.FC = () => {
 
         if (data.npc_name) {
           setActiveNPC(data.npc_name);
+          setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, activeNPC: data.npc_name! } : s));
           setEntities((prev) => {
             const exists = prev.find((e) => e.name === data.npc_name);
             if (!exists) {
@@ -413,6 +608,7 @@ const Chat: React.FC = () => {
 
       if (data.location) {
         setActiveLocation(data.location);
+        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, location: data.location! } : s));
       }
 
       setMessages((prev) => [...prev, ...newMessages]);
@@ -429,7 +625,156 @@ const Chat: React.FC = () => {
       setIsLoading(false);
       inputRef.current?.focus();
     }
-  }, [inputValue, isLoading, sessionId, activeNPC]);
+  }, [inputValue, isLoading, currentSessionId, activeNPC, sessions]);
+
+  const createSession = useCallback(async (
+    name: string,
+    location: string,
+    sheet: string,
+    firstAction: string,
+    scenario: string = '',
+    lore: string = '',
+    thumbnail: string = '',
+    chatType: 'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO' = 'ROLEPLAY'
+  ) => {
+    if (!name.trim()) return;
+    const newId = crypto.randomUUID();
+    const newSess: RPSession = {
+      id: newId,
+      charName: name.trim(),
+      location: location,
+      activeNPC: null,
+      createdAt: new Date().toISOString(),
+      chatType,
+      scenario: scenario.trim() || undefined,
+      charLore: lore.trim() || undefined,
+      thumbnail: thumbnail.trim() || undefined,
+      agentOverride: null
+    };
+
+    setSessions(prev => [newSess, ...prev]);
+    setCurrentSessionId(newId);
+    setShowCreateModal(false);
+    
+    setNewCharName('');
+    setNewCharSheet('');
+    setNewCharAction('');
+    setNewScenario('');
+    setNewCharLore('');
+    setNewCharThumbnail('');
+    setNewChatType('ROLEPLAY');
+
+    let initialInput = "";
+    if (scenario.trim()) {
+      initialInput += `Scénario / Contexte : ${scenario.trim()}\n\n`;
+    }
+    if (lore.trim()) {
+      initialInput += `Lore du Personnage : ${lore.trim()}\n\n`;
+    }
+    if (sheet.trim()) {
+      initialInput += `Fiche de Personnage : ${name}\n${sheet.trim()}\n\n`;
+    }
+    initialInput += `Lieu : ${location}\n`;
+    if (firstAction.trim()) {
+      initialInput += `Action : ${firstAction.trim()}`;
+    } else {
+      initialInput += `Action : Je commence mon aventure à ${location}.`;
+    }
+
+    const playerMsg: Message = {
+      id: crypto.randomUUID(),
+      role: 'player',
+      content: initialInput,
+      timestamp: new Date(),
+    };
+    setMessages([playerMsg]);
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('http://localhost:8000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: newId,
+          player_input: initialInput,
+          universe_id: 'f0000000-0000-0000-0000-000000000001',
+          chat_type: chatType
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const newMessages: Message[] = [];
+        
+        // Set v3 state values
+        setActiveRoute(data.active_route || 'NARRATIVE_DIRECTOR');
+        setScratchpad(data.scratchpad || '');
+        setCharacterState(data.character_state || null);
+
+        if (data.world_event) {
+          newMessages.push({
+            id: crypto.randomUUID(),
+            role: 'director',
+            content: data.world_event,
+            timestamp: new Date(),
+          });
+        }
+        if (data.character_output) {
+          newMessages.push({
+            id: crypto.randomUUID(),
+            role: 'npc',
+            content: data.character_output,
+            npcName: data.npc_name ?? 'Le Monde',
+            timestamp: new Date(),
+          });
+        }
+        
+        let updatedLoc = location;
+        let updatedNPC = null;
+        if (data.location) {
+          updatedLoc = data.location;
+          setActiveLocation(data.location);
+        }
+        if (data.npc_name) {
+          updatedNPC = data.npc_name;
+          setActiveNPC(data.npc_name);
+        }
+        
+        setSessions(prev => prev.map(s => s.id === newId ? { 
+          ...s, 
+          location: updatedLoc, 
+          activeNPC: updatedNPC,
+          charId: data.char_id || s.charId
+        } : s));
+        setMessages(prev => [...prev, ...newMessages]);
+      }
+    } catch (err) {
+      console.error("Error creating session:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const deleteSession = useCallback(async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (sessions.length <= 1) {
+      alert("Vous devez garder au moins une session RP active.");
+      return;
+    }
+    if (!confirm("Voulez-vous vraiment supprimer cette session RP ?")) return;
+
+    try {
+      fetch(`http://localhost:8000/chat/${id}/clear`, { method: 'POST' });
+    } catch (err) {
+      console.error(err);
+    }
+
+    const filtered = sessions.filter(s => s.id !== id);
+    setSessions(filtered);
+    if (currentSessionId === id) {
+      setCurrentSessionId(filtered[0].id);
+    }
+  }, [sessions, currentSessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -448,6 +793,45 @@ const Chat: React.FC = () => {
 
           <WorldEventTicker events={CURRENT_EVENTS} />
 
+          {/* RP Sessions Selector */}
+          <div style={styles.sideSection}>
+            <div style={styles.sideSectionLabel}>JEUX DE RÔLES ACTIFS</div>
+            <div style={sessionStyles.sessionList}>
+              {sessions.map((sess) => {
+                const isActive = sess.id === currentSessionId;
+                return (
+                  <div
+                    key={sess.id}
+                    onClick={() => !isLoading && setCurrentSessionId(sess.id)}
+                    style={{
+                      ...sessionStyles.sessionItem,
+                      ...(isActive ? sessionStyles.sessionItemActive : {}),
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <div style={sessionStyles.sessionMeta}>
+                      <span style={sessionStyles.sessionCharName}>⚔️ {sess.charName}</span>
+                      <span
+                        onClick={(e) => deleteSession(sess.id, e)}
+                        style={sessionStyles.sessionDelete}
+                        title="Supprimer ce RP"
+                      >
+                        ×
+                      </span>
+                    </div>
+                    <div style={sessionStyles.sessionLocation}>⚑ {sess.location}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              style={sessionStyles.createButton}
+            >
+              + NOUVEAU JEU DE RÔLE
+            </button>
+          </div>
+
           <div style={styles.sideSection}>
             <div style={styles.sideSectionLabel}>LOCALISATION ACTIVE</div>
             <div style={styles.locationBox}>
@@ -455,6 +839,58 @@ const Chat: React.FC = () => {
               <span style={styles.locationName}>{activeLocation}</span>
             </div>
           </div>
+
+          {characterState && characterState.resource_pools && (
+            <div style={styles.sideSection}>
+              <div style={styles.sideSectionLabel}>RESSOURCES DU HÉROS</div>
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                background: '#12102a',
+                padding: '10px',
+                borderRadius: '6px',
+                border: '1px solid #2a2440'
+              }}>
+                {/* Vitality Bar */}
+                {characterState.resource_pools.vitality && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', color: '#ef4444', marginBottom: '2px' }}>
+                      <span>VITALITÉ</span>
+                      <span>{characterState.resource_pools.vitality.current} / {characterState.resource_pools.vitality.max}</span>
+                    </div>
+                    <div style={{ width: '100%', height: '4px', background: '#1c1212', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(100, Math.max(0, (characterState.resource_pools.vitality.current / characterState.resource_pools.vitality.max) * 100))}%`, height: '100%', background: '#ef4444', transition: 'width 0.3s ease' }} />
+                    </div>
+                  </div>
+                )}
+                {/* Endurance Bar */}
+                {characterState.resource_pools.endurance && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', color: '#22c55e', marginBottom: '2px' }}>
+                      <span>ENDURANCE</span>
+                      <span>{Math.round(characterState.resource_pools.endurance.current * 10) / 10} / {characterState.resource_pools.endurance.max}</span>
+                    </div>
+                    <div style={{ width: '100%', height: '4px', background: '#0e1c12', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(100, Math.max(0, (characterState.resource_pools.endurance.current / characterState.resource_pools.endurance.max) * 100))}%`, height: '100%', background: '#22c55e', transition: 'width 0.3s ease' }} />
+                    </div>
+                  </div>
+                )}
+                {/* Reserve Bar */}
+                {characterState.resource_pools.reserve && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: 'bold', color: '#3b82f6', marginBottom: '2px' }}>
+                      <span>RÉSERVE</span>
+                      <span>{Math.round(characterState.resource_pools.reserve.current * 10) / 10} / {characterState.resource_pools.reserve.max}</span>
+                    </div>
+                    <div style={{ width: '100%', height: '4px', background: '#0d1624', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div style={{ width: `${Math.min(100, Math.max(0, (characterState.resource_pools.reserve.current / characterState.resource_pools.reserve.max) * 100))}%`, height: '100%', background: '#3b82f6', transition: 'width 0.3s ease' }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div style={styles.sideSection}>
             <div style={styles.sideSectionLabel}>STATISTIQUES DE SESSION</div>
@@ -465,32 +901,82 @@ const Chat: React.FC = () => {
             </div>
           </div>
 
-          <div style={styles.sideSection}>
-            <div style={styles.sideSectionLabel}>SESSION</div>
-            <div style={styles.sessionIdText}>
-              {sessionId.slice(0, 8).toUpperCase()}...
-            </div>
-          </div>
-
           <div style={{ flex: 1 }} />
 
           <div style={styles.sideFooter}>
             <span style={styles.footerGlyph}>⚕</span> Fallen Universe v4.0
           </div>
         </aside>
-
-        {/* ── CENTER PANEL ── */}
         <main style={styles.centerPanel}>
-          {/* Context banner */}
-          <div style={styles.contextBanner}>
-            <span style={styles.contextIcon}>◉</span>
-            <span style={styles.contextText}>
-              {activeNPC
-                ? `Parlant avec ${activeNPC} — ${activeLocation}`
-                : `Explorant ${activeLocation} — Aucun PNJ actif`}
-            </span>
-            <div style={styles.contextDot} />
+          {/* Context banner with routing indicator */}
+          <div style={{ ...styles.contextBanner, display: 'flex', justifyContent: 'space-between', paddingRight: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={styles.contextIcon}>◉</span>
+              <span style={styles.contextText}>
+                {activeNPC
+                  ? `Parlant avec ${activeNPC} — ${activeLocation}`
+                  : `Explorant ${activeLocation} — Aucun PNJ actif`}
+              </span>
+            </div>
+            {activeRoute && (
+              <div style={{
+                fontSize: '9px',
+                fontWeight: 'bold',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                border: '1px solid',
+                letterSpacing: '0.05em',
+                ...(activeRoute === 'GRAND_ARBITER' ? { color: '#f87171', borderColor: '#b91c1c60', background: '#991b1b20' } :
+                    activeRoute === 'WORLDSMITH' ? { color: '#818cf8', borderColor: '#4338ca60', background: '#3730a320' } :
+                    activeRoute === 'PERSONA_BLACKSMITH' ? { color: '#34d399', borderColor: '#065f4660', background: '#064e3b20' } :
+                    { color: '#c084fc', borderColor: '#6b21a860', background: '#581c8720' })
+              }}>
+                {activeRoute === 'GRAND_ARBITER' ? '⚖️ ARBITRE DE JEU' :
+                 activeRoute === 'WORLDSMITH' ? '🗺️ WORLDSMITH' :
+                 activeRoute === 'PERSONA_BLACKSMITH' ? '👤 BLACKSMITH' :
+                 '🎭 DIRECTEUR NARRATIF'}
+              </div>
+            )}
           </div>
+
+          {/* Collapsible scratchpad debugger */}
+          {scratchpad && (
+            <div style={{ borderBottom: '1px solid #1e1b2e', background: '#090815' }}>
+              <div
+                onClick={() => setShowScratchpad(!showScratchpad)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '6px 20px',
+                  cursor: 'pointer',
+                  color: '#8b84a8',
+                  fontSize: '10px',
+                  fontWeight: 'bold',
+                  letterSpacing: '0.05em'
+                }}
+              >
+                <span>{showScratchpad ? '▼ JOURNAL DES PENSÉES (SCRATCHPAD)' : '▶ JOURNAL DES PENSÉES (SCRATCHPAD)'}</span>
+                <span style={{ fontSize: '8px', opacity: 0.5 }}>DEBUGGER</span>
+              </div>
+              {showScratchpad && (
+                <div style={{
+                  padding: '10px 20px',
+                  fontFamily: 'monospace',
+                  fontSize: '10px',
+                  color: '#a5b4fc',
+                  lineHeight: '1.5',
+                  background: '#04030a',
+                  borderTop: '1px solid #1e1b2e',
+                  maxHeight: '150px',
+                  overflowY: 'auto',
+                  whiteSpace: 'pre-line'
+                }} className="fallen-scroll">
+                  {scratchpad}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Message stream */}
           <div style={styles.messageStream} className="fallen-scroll">
@@ -503,6 +989,55 @@ const Chat: React.FC = () => {
 
           {/* Input area */}
           <div style={styles.inputArea}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', padding: '0 4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#8b84a8', letterSpacing: '0.05em' }}>ORCHESTRATEUR RP :</span>
+                <select
+                  value={activeSess?.agentOverride || 'AUTO'}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateSessionAgentOverride(val === 'AUTO' ? null : val);
+                  }}
+                  style={{
+                    background: '#12102a',
+                    border: '1px solid #2a2440',
+                    borderRadius: '4px',
+                    color: '#e2e0d6',
+                    fontSize: '10px',
+                    fontWeight: 'bold',
+                    padding: '2px 8px',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <option value="AUTO">🤖 ROUTAGE AUTOMATIQUE</option>
+                  <option value="NARRATIVE_DIRECTOR">🎭 DIRECTEUR NARRATIF</option>
+                  <option value="WORLDSMITH">🗺️ WORLDSMITH</option>
+                  <option value="PERSONA_BLACKSMITH">👤 PERSONA BLACKSMITH</option>
+                  <option value="GRAND_ARBITER">⚖️ GRAND ARBITRE</option>
+                </select>
+              </div>
+
+              {activeSess?.chatType && (
+                <div style={{
+                  fontSize: '9px',
+                  fontWeight: 'bold',
+                  color: '#c9a84c',
+                  background: '#6b21a820',
+                  border: '1px solid #c9a84c40',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  letterSpacing: '0.05em'
+                }}>
+                  {activeSess.chatType === 'ROLEPLAY' ? '⚔️ HISTOIRE RP' :
+                   activeSess.chatType === 'NPC_BUILDER' ? '👤 FABRIQUE DE PNJ' :
+                   activeSess.chatType === 'QUEST_DESIGNER' ? '🗺️ QUÊTES & ÉVÉNEMENTS' :
+                   '⚖️ ARBITRE SOLO'}
+                </div>
+              )}
+            </div>
+
             <div style={styles.inputWrapper}>
               <textarea
                 ref={inputRef}
@@ -559,6 +1094,70 @@ const Chat: React.FC = () => {
             <div style={styles.lorebookHeader}>
               <span style={styles.lorebookIcon}>📖</span> GRIMOIRE
             </div>
+
+            <AccordionSection
+              title="Fiche de Personnage"
+              open={lorebookOpen.fiche}
+              onToggle={() => toggleLorebook('fiche')}
+            >
+              {characterState ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '5px' }}>
+                  <div style={{ fontSize: '11px', color: '#c9a84c', fontWeight: 'bold', borderBottom: '1px solid #2a2440', paddingBottom: '4px', letterSpacing: '0.05em' }}>
+                    {characterState.name} — {characterState.faction} ({characterState.rank})
+                  </div>
+                  
+                  {/* Stats list */}
+                  {characterState.stats && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                      {Object.entries(characterState.stats).map(([statName, sInfo]: any) => (
+                        <div key={statName} style={{ display: 'flex', justifyContent: 'space-between', background: '#12102a', padding: '4px 6px', borderRadius: '4px', border: '1px solid #2a2440', fontSize: '9px' }}>
+                          <span style={{ color: '#8b84a8' }}>{statName}</span>
+                          <span style={{ color: sInfo.category === 'strong' ? '#c9a84c' : '#e2e0d6', fontWeight: 'bold' }}>
+                            {sInfo.value}{sInfo.category === 'strong' && '★'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Techniques list */}
+                  {characterState.techniques && characterState.techniques.length > 0 && (
+                    <div style={{ marginTop: '4px' }}>
+                      <div style={{ fontSize: '9px', color: '#6b21a8', fontWeight: 'bold', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Techniques & Sorts</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {characterState.techniques.map((tech: any, i: number) => (
+                          <div key={i} style={{ background: tech.visibility === 'REVEALED' ? '#1c1936' : '#12102a', padding: '5px 6px', borderRadius: '4px', border: '1px solid #2a2440', fontSize: '9px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+                              <span style={{ color: tech.visibility === 'REVEALED' ? '#c9a84c' : '#8b84a8' }}>
+                                {tech.name} {tech.visibility === 'HIDDEN' && '🔒'}
+                              </span>
+                              <span style={{ color: '#6b21a8' }}>{tech.rank}</span>
+                            </div>
+                            {tech.description && (
+                              <div style={{ fontSize: '8px', color: '#8b84a8', marginTop: '2px', fontStyle: 'italic' }}>
+                                {tech.description}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Fortune */}
+                  {characterState.fortune !== undefined && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b84a8', marginTop: '4px', borderTop: '1px solid #2a2440', paddingTop: '4px' }}>
+                      <span>Fortune:</span>
+                      <span style={{ color: '#c9a84c', fontWeight: 'bold' }}>{characterState.fortune.toLocaleString()} PO</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize: '10px', color: '#4a4570', fontStyle: 'italic', textAlign: 'center', padding: '10px' }}>
+                  Aucune fiche active. Créez ou sélectionnez un jeu de rôle.
+                </div>
+              )}
+            </AccordionSection>
 
             <AccordionSection
               title="Les 12 Divinités"
@@ -659,11 +1258,145 @@ const Chat: React.FC = () => {
           </div>
         </aside>
       </div>
+
+      {/* ── CREATION MODAL ── */}
+      {showCreateModal && (
+        <div style={modalStyles.overlay}>
+          <div style={modalStyles.modal}>
+            <div style={modalStyles.header}>
+              <span style={modalStyles.title}>NOUVELLE AVENTURE</span>
+              <button onClick={() => setShowCreateModal(false)} style={modalStyles.closeBtn}>×</button>
+            </div>
+            
+            <div style={modalStyles.body}>
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Nom du Personnage (PJ)</label>
+                <input
+                  type="text"
+                  value={newCharName}
+                  onChange={(e) => setNewCharName(e.target.value)}
+                  placeholder="Ex: Adriel, l'Égaré d'Ithis"
+                  style={modalStyles.input}
+                />
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Lieu de départ</label>
+                <select
+                  value={newCharLocation}
+                  onChange={(e) => setNewCharLocation(e.target.value)}
+                  style={modalStyles.select}
+                >
+                  <option value="Atlantica">Atlantica (Continent ancien)</option>
+                  <option value="Noah">Noah (Continent vert / Esprit)</option>
+                  <option value="Baraen">Baraen (Désert des exilés / Astre)</option>
+                  <option value="Icetoon">Icetoon (Continent de glace / Vikings)</option>
+                  <option value="Roahx">Roahx (Continent sauvage / Mercenaires)</option>
+                  <option value="Kaos">Kaos (Continent des braves / Guerriers)</option>
+                  <option value="Ithis">Ithis (Continent maudit / Sorciers & Loups)</option>
+                  <option value="Céleste">Céleste (Le paradis des anges)</option>
+                  <option value="Mundus">Mundus (L'enfer souterrain / Démons)</option>
+                </select>
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Type de Session</label>
+                <select
+                  value={newChatType}
+                  onChange={(e) => setNewChatType(e.target.value as any)}
+                  style={modalStyles.select}
+                >
+                  <option value="ROLEPLAY">⚔️ Histoire de Jeu de Rôle Standard</option>
+                  <option value="NPC_BUILDER">👤 Fabrique de PNJ (Créateur de Personnage)</option>
+                  <option value="QUEST_DESIGNER">🗺️ Concepteur de Quêtes & Événements</option>
+                  <option value="GRAND_ARBITER_SOLO">⚖️ Arbitrage de Combat / Rulings Solo</option>
+                </select>
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Contexte / Scénario Global (Facultatif)</label>
+                <textarea
+                  value={newScenario}
+                  onChange={(e) => setNewScenario(e.target.value)}
+                  placeholder="Décrivez l'intrigue générale ou le scénario de départ..."
+                  style={modalStyles.textarea}
+                  rows={2}
+                />
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Lore & Histoire du Personnage (Facultatif)</label>
+                <textarea
+                  value={newCharLore}
+                  onChange={(e) => setNewCharLore(e.target.value)}
+                  placeholder="Écrivez le passé de votre personnage, ses croyances et ses secrets..."
+                  style={modalStyles.textarea}
+                  rows={2}
+                />
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Miniature / Avatar du Personnage (URL Image - Facultatif)</label>
+                <input
+                  type="text"
+                  value={newCharThumbnail}
+                  onChange={(e) => setNewCharThumbnail(e.target.value)}
+                  placeholder="https://lien-image.com/avatar.png"
+                  style={modalStyles.input}
+                />
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Fiche Technique (Stats & Faction) - Facultatif</label>
+                <textarea
+                  value={newCharSheet}
+                  onChange={(e) => setNewCharSheet(e.target.value)}
+                  placeholder="Collez ici votre fiche technique (ex: Faction: Occulte, Puissance: 7, Réserve: 7...)"
+                  style={modalStyles.textarea}
+                  rows={3}
+                />
+                <div style={modalStyles.helpText}>
+                  Astuce: Vous pouvez utiliser le format Rank 1 (Stats fortes: 7, normales: 6, faibles: 5).
+                </div>
+              </div>
+
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Première Action / Contexte de départ</label>
+                <textarea
+                  value={newCharAction}
+                  onChange={(e) => setNewCharAction(e.target.value)}
+                  placeholder="Décrivez votre première action (ex: *Je m'enfonce sous le couvert des arbres de la forêt de Vianum...*)"
+                  style={modalStyles.textarea}
+                  rows={3}
+                />
+              </div>
+            </div>
+
+            <div style={modalStyles.footer}>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                style={modalStyles.cancelBtn}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => createSession(newCharName, newCharLocation, newCharSheet, newCharAction, newScenario, newCharLore, newCharThumbnail, newChatType)}
+                disabled={!newCharName.trim()}
+                style={{
+                  ...modalStyles.submitBtn,
+                  opacity: newCharName.trim() ? 1 : 0.5,
+                  cursor: newCharName.trim() ? 'pointer' : 'not-allowed',
+                }}
+              >
+                Lancer la Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
@@ -1346,8 +2079,198 @@ const styles: Record<string, React.CSSProperties> = {
   },
 };
 
-// ─── Global CSS (keyframes + scrollbar + focus styles) ──────────────────────
+const sessionStyles: Record<string, React.CSSProperties> = {
+  sessionList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    maxHeight: '180px',
+    overflowY: 'auto',
+    marginBottom: '10px',
+    paddingRight: '4px',
+  },
+  sessionItem: {
+    padding: '8px 10px',
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    transition: 'all 0.2s ease',
+  },
+  sessionItemActive: {
+    background: '#1b133b',
+    borderColor: '#c9a84c',
+    boxShadow: '0 0 10px #6b21a830',
+  },
+  sessionMeta: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sessionCharName: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#e2e0d6',
+  },
+  sessionDelete: {
+    color: '#dc2626',
+    fontSize: '16px',
+    cursor: 'pointer',
+    padding: '0 4px',
+    lineHeight: 1,
+    transition: 'color 0.2s',
+  },
+  sessionLocation: {
+    fontSize: '9px',
+    color: '#8b84a8',
+    marginTop: '4px',
+  },
+  createButton: {
+    width: '100%',
+    padding: '8px',
+    background: 'transparent',
+    border: '1px dashed #c9a84c80',
+    color: '#c9a84c',
+    borderRadius: '6px',
+    fontSize: '11px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    marginTop: '4px',
+  },
+};
 
+const modalStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(5, 5, 8, 0.85)',
+    backdropFilter: 'blur(8px)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  modal: {
+    width: '90%',
+    maxWidth: '500px',
+    background: '#0d0b18',
+    border: '1px solid #c9a84c',
+    borderRadius: '12px',
+    boxShadow: '0 0 40px rgba(107, 33, 168, 0.4)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  header: {
+    padding: '16px 20px',
+    borderBottom: '1px solid #1e1b2e',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: '14px',
+    fontWeight: 800,
+    color: '#c9a84c',
+    letterSpacing: '0.1em',
+  },
+  closeBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#8b84a8',
+    fontSize: '24px',
+    cursor: 'pointer',
+    lineHeight: 1,
+  },
+  body: {
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    maxHeight: '70vh',
+    overflowY: 'auto',
+  },
+  formGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  label: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#8b84a8',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+  },
+  input: {
+    padding: '10px',
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    color: '#e2e0d6',
+    fontSize: '13px',
+    outline: 'none',
+  },
+  select: {
+    padding: '10px',
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    color: '#e2e0d6',
+    fontSize: '13px',
+    outline: 'none',
+  },
+  textarea: {
+    padding: '10px',
+    background: '#12102a',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    color: '#e2e0d6',
+    fontSize: '12px',
+    outline: 'none',
+    fontFamily: 'inherit',
+    resize: 'vertical',
+  },
+  helpText: {
+    fontSize: '10px',
+    color: '#6b21a8',
+    fontStyle: 'italic',
+  },
+  footer: {
+    padding: '16px 20px',
+    borderTop: '1px solid #1e1b2e',
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '12px',
+  },
+  cancelBtn: {
+    padding: '8px 16px',
+    background: 'transparent',
+    border: '1px solid #2a2440',
+    borderRadius: '6px',
+    color: '#8b84a8',
+    fontSize: '12px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+  },
+  submitBtn: {
+    padding: '8px 16px',
+    background: '#6b21a8',
+    border: '1px solid #c9a84c',
+    borderRadius: '6px',
+    color: '#e2e0d6',
+    fontSize: '12px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    boxShadow: '0 0 10px rgba(107, 33, 168, 0.4)',
+  },
+};
+
+// ─── Global CSS (keyframes + scrollbar + focus styles) ──────────────────────
 const globalStyles = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 

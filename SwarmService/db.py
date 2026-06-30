@@ -398,3 +398,163 @@ def get_universe(universe_id: str) -> dict:
         logger.error(f"Error getting universe details: {e}")
         return None
 
+
+# ============================================================
+# v3 — Character Ledger & Combat State Functions
+# ============================================================
+
+def get_player_character(universe_id: str, char_id: str) -> dict:
+    """Retrieves a player character sheet by char_id and universe_id.
+
+    Returns a dict with char_name, faction, stats (JSONB), points (JSONB),
+    inventory (JSONB), fortune, and blessings. Returns None if not found.
+    """
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT char_name, faction, stats, points, inventory, fortune, blessings
+                    FROM yinyang.player_characters
+                    WHERE char_id = %s AND universe_id = %s;
+                    """,
+                    (char_id, universe_id)
+                )
+                return cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error getting player character: {e}")
+        return None
+
+
+def get_combat_state(session_id: str, char_id: str) -> dict:
+    """Retrieves the volatile combat state for a character within a session.
+
+    Returns a dict with current_vitality, current_endurance, current_reserve,
+    active_buffs, active_debuffs, status_effects, and turn_counter.
+    Returns None if no combat state exists (fresh session, no combat yet).
+    """
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT current_vitality, current_endurance, current_reserve,
+                           active_buffs, active_debuffs, status_effects, turn_counter
+                    FROM yinyang.character_combat_state
+                    WHERE session_id = %s AND char_id = %s;
+                    """,
+                    (session_id, char_id)
+                )
+                return cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error getting combat state: {e}")
+        return None
+
+
+def upsert_combat_state(
+    session_id: str,
+    char_id: str,
+    vitality: int,
+    endurance: float,
+    reserve: float,
+    buffs: list = None,
+    debuffs: list = None,
+    status_effects: list = None,
+    turn_counter: int = 0
+):
+    """Inserts or updates the volatile combat state for a character in a session.
+
+    Uses INSERT ... ON CONFLICT (session_id, char_id) DO UPDATE to upsert
+    current_vitality, current_endurance, current_reserve, active_buffs,
+    active_debuffs, status_effects, turn_counter, and updated_at.
+    """
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO yinyang.character_combat_state
+                        (session_id, char_id, current_vitality, current_endurance,
+                         current_reserve, active_buffs, active_debuffs,
+                         status_effects, turn_counter, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (session_id, char_id) DO UPDATE SET
+                        current_vitality  = EXCLUDED.current_vitality,
+                        current_endurance = EXCLUDED.current_endurance,
+                        current_reserve   = EXCLUDED.current_reserve,
+                        active_buffs      = EXCLUDED.active_buffs,
+                        active_debuffs    = EXCLUDED.active_debuffs,
+                        status_effects    = EXCLUDED.status_effects,
+                        turn_counter      = EXCLUDED.turn_counter,
+                        updated_at        = CURRENT_TIMESTAMP;
+                    """,
+                    (
+                        session_id, char_id, vitality, endurance, reserve,
+                        Json(buffs or []),
+                        Json(debuffs or []),
+                        status_effects or [],
+                        turn_counter
+                    )
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error upserting combat state: {e}")
+
+
+def get_revealed_techniques(session_id: str, techniques_list: list[str] = None) -> list:
+    """Scans session chat history for technique names that appear in assistant messages.
+
+    For each technique name in techniques_list, checks if it appears (case-insensitive)
+    in any assistant message content for the given session. Returns the list of
+    technique names that have been mentioned (i.e., revealed in narrative).
+
+    Args:
+        session_id: The session to scan.
+        techniques_list: List of technique name strings to search for.
+                         If None or empty, returns an empty list.
+
+    Returns:
+        A list of technique names found in assistant messages.
+    """
+    if not techniques_list:
+        return []
+
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Fetch all assistant messages for this session
+                cur.execute(
+                    """
+                    SELECT content
+                    FROM yinyang.session_chat_history
+                    WHERE session_id = %s AND role = 'assistant';
+                    """,
+                    (session_id,)
+                )
+                rows = cur.fetchall()
+
+            # Concatenate all assistant content for a single search pass
+            all_content = " ".join(row["content"] for row in rows).lower()
+
+            revealed = []
+            for technique in techniques_list:
+                if technique.lower() in all_content:
+                    revealed.append(technique)
+
+            return revealed
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error scanning for revealed techniques: {e}")
+        return []
+

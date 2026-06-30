@@ -1,57 +1,137 @@
-# Yinyang Setup Guide
+# YinYang v3 — Setup & Execution Guide
 
-## Prerequisites
-To ensure that your Spring Boot application runs smoothly, make sure you have the following installed:
-
-### 1. Java 23
-- Verify your Java version by running:
-  ```sh
-  java -version
-  ```
-- If Java 23 is not installed, download and install it from [Oracle JDK](https://www.oracle.com/java/technologies/javase-downloads.html) or use an OpenJDK distribution.
-
-### 2. MySQL
-- Ensure MySQL is installed and running.
-- If MySQL is not installed, download it from [MySQL Downloads](https://dev.mysql.com/downloads/).
-  Update your `application.properties` or `application.yml` file with the appropriate database connection settings.
-
-## Running the Project
-
-### 1. Clone the Repository
-If you haven't already, clone the project.
-
-### 2. Build and Run the Application
-Use Gradle to build the project and install dependencies:
-access and run the `build.gradle` file under the Backend folder
-Run the following command to build the project:
-"./gradlew build"
-This compiles the code, runs tests, and generates a JAR file in build/libs/.
-To force refresh dependencies:
-"./gradlew build --refresh-dependencies"
-
-Then, Run the app with the bootRun task:
-./gradlew bootRun
-The app will start on http://localhost:8080.
-Stop the app with Ctrl + C.
-
-### 3. Adding Dependencies
-If you need to add new dependencies, update the `build.gradle` file under the `dependencies` section.
-Then, run the `build.gradle` to fetch the new dependencies.
-
-## Troubleshooting
-
-### 1. Java Version Issues
-If you encounter Java-related issues, ensure Gradle is using Java 23 by running:
-If an older version is used, update your `JAVA_HOME` environment variable.
-
-### 2. MySQL Connection Errors
-- Check if MySQL is running:
-- Ensure the database credentials in `application.properties` are correct.
-
-### 3. Gradle Build Issues
-If the build fails, try 'gradle clean'
-and then re-run the build command.
+YinYang v3 is an advanced, deep-prose autonomous roleplay engine running on the `deepseek/deepseek-v4-flash` model (via OpenRouter) with a LangGraph-orchestrated multi-agent swarm backend and a responsive, immersive React frontend.
 
 ---
-With these steps, you should be able to set up and run your Spring Boot application successfully.
 
+## 🏗️ System Architecture
+
+The backend implements a **Context-Isolated 4-Way Agent Router** that classifies player actions and delegates them to specialized narrative nodes:
+
+```
+                  ┌──────────────────────┐
+                  │     Player Action    │
+                  └──────────┬───────────┘
+                             │
+                             ▼
+               ┌───────────────────────────┐
+               │  Intent Classifier Router │
+               └─────────────┬─────────────┘
+                             │
+         ┌───────────────────┼───────────────────┬───────────────────┐
+         ▼                   ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│Narrative Direct.│ │    Worldsmith   │ │PersonaBlacksmith│ │  Grand Arbiter  │
+│  (Story/Prose)  │ │ (World/Quests)  │ │ (PNJ Generation)│ │ (Rules/Combat)  │
+└────────┬────────┘ └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
+         │                   │                   │                   │
+         └───────────────────┴─────────┬─────────┴───────────────────┘
+                                       │
+                                       ▼
+                       ┌──────────────────────────────┐
+                       │ LedgerGuard (Postgres State) │
+                       └──────────────────────────────┘
+```
+
+1. **🎭 Narrative Director v3**: Generates immersive French literary prose and story flow.
+2. **🗺️ Worldsmith**: Creates dungeons, regions, points of interest, and custom quests.
+3. **👤 Persona Blacksmith**: Models character details, NPC behaviors, and dialog patterns.
+4. **⚖️ Grand Arbiter**: Adjudicates rules, processes combat states, and updates hero stats.
+
+All states are updated in an **atomic transaction** with **Postgres advisory locks** to guarantee consistency.
+
+---
+
+## 🛠️ Prerequisites
+
+Ensure you have the following installed on your system:
+- **Python 3.10+** (with virtual environment support)
+- **Node.js 18+** & **npm**
+- **Supabase Database Project** (hosting the Postgres database)
+
+---
+
+## ⚙️ Configuration Setup
+
+### 1. Backend Configuration (`SwarmService/.env`)
+Create a `.env` file inside the `SwarmService/` directory:
+```env
+# OpenRouter API Key
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+OPENROUTER_URL=https://openrouter.ai/api/v1
+MODEL_NAME=deepseek/deepseek-v4-flash
+
+# Database Connection (Supabase PostgreSQL Connection String)
+DATABASE_URL=postgresql://postgres:[password]@db.[project-id].supabase.co:6543/postgres?sslmode=require
+```
+
+### 2. Frontend Configuration (`Frontend/.env`)
+Create a `.env` file inside the `Frontend/` directory:
+```env
+VITE_SUPABASE_URL=https://[project-id].supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key_here
+```
+
+---
+
+## 🚀 Running the Engine
+
+### Step 1: Start the Backend Service (FastAPI)
+
+1. Navigate to the `SwarmService/` folder:
+   ```bash
+   cd SwarmService
+   ```
+2. Create and activate a Python virtual environment:
+   * **Windows (PowerShell):**
+     ```powershell
+     python -m venv .venv
+     .\.venv\Scripts\Activate.ps1
+     ```
+   * **Linux / macOS:**
+     ```bash
+     python -m venv .venv
+     source .venv/bin/activate
+     ```
+3. Install required Python packages:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Run the FastAPI server:
+   ```bash
+   python main.py
+   ```
+   The backend service starts on **`http://localhost:8000`**.
+
+### Step 2: Run the Verification Test Suite
+
+Verify that the multi-agent swarm state machine, routing intent parser, and output parsing layers are fully functional by running the verification test runner:
+```bash
+python verify_swarm.py
+```
+This runs 6 unique gameplay scenarios (exploration, combat checks, continuity validation, companion emulations) against the server to check for structural accuracy and logic rules.
+
+### Step 3: Start the Frontend Application (React)
+
+1. Open a new terminal window and navigate to the `Frontend/` folder:
+   ```bash
+   cd Frontend
+   ```
+2. Install npm dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the Vite development server:
+   ```bash
+   npm run dev
+   ```
+   The frontend application is now accessible at **`http://localhost:5173`**.
+
+---
+
+## 🕹️ Gameplay & UI Features
+
+- **RPG Hero Resource Bars**: View real-time stats for `VITALITÉ` (red), `ENDURANCE` (green), and `RÉSERVE MAGIQUE` (blue) in the left panel.
+- **Active Agent Badges**: Next to the location banner, look for badges showing which AI agent processed your action (e.g. `⚖️ ARBITRE DE JEU`, `🎭 DIRECTEUR NARRATIF`).
+- **Fiche de Personnage (Character Sheet)**: Expand the right panel accordion to inspect your character's stats, level, faction, and abilities. Secret techniques are marked with `🔒` (hidden from NPCs under anti-metagaming guidelines).
+- **Thought Log Debugger (Scratchpad)**: Click the header at the top of the chat panel to toggle a hidden debug log displaying the AI's private thoughts, environment rules analysis, and game master logic.

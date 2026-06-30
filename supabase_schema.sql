@@ -968,3 +968,30 @@ ON CONFLICT (entity_id) DO UPDATE SET
     name = EXCLUDED.name,
     properties = EXCLUDED.properties,
     current_location_id = EXCLUDED.current_location_id;
+
+-- ============================================================
+-- CHARACTER COMBAT STATE (volatile, per-session tracking)
+-- ============================================================
+
+-- Tracks the player's live combat resources within a session.
+-- Rows are ephemeral: they are created on first combat action and
+-- cascade-deleted when the parent session is removed.
+CREATE TABLE IF NOT EXISTS yinyang.character_combat_state (
+    state_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES yinyang.sessions(session_id) ON DELETE CASCADE,
+    char_id UUID NOT NULL REFERENCES yinyang.player_characters(char_id) ON DELETE CASCADE,
+    current_vitality INTEGER NOT NULL DEFAULT 10,
+    current_endurance NUMERIC(5,2) NOT NULL DEFAULT 10,
+    current_reserve NUMERIC(5,2) NOT NULL DEFAULT 10,
+    active_buffs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    active_debuffs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status_effects TEXT[] DEFAULT '{}',
+    turn_counter INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_session_char UNIQUE(session_id, char_id)
+);
+CREATE INDEX IF NOT EXISTS idx_combat_state_session_char ON yinyang.character_combat_state(session_id, char_id);
+
+-- Grant permissions matching the existing pattern
+GRANT ALL PRIVILEGES ON yinyang.character_combat_state TO postgres, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON yinyang.character_combat_state TO anon, authenticated;
