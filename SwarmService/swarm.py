@@ -466,6 +466,18 @@ def run_grand_arbiter_node(state: SwarmState) -> Dict[str, Any]:
 def run_continuity_critic(state: SwarmState) -> Dict[str, Any]:
     """Critic Node: Evaluates Director's output for contradictions."""
     logger.info("Running Continuity Critic Node...")
+    
+    # Bypass Critic if active_route is GRAND_ARBITER or agent_override is GRAND_ARBITER
+    active_route = state.get("active_route")
+    agent_override = state.get("agent_override")
+    if active_route == "GRAND_ARBITER" or agent_override == "GRAND_ARBITER":
+        logger.info("Grand Arbiter active. Bypassing Continuity Critic validation.")
+        return {
+            "critic_approved": True,
+            "critic_feedback": "",
+            "retry_count": state.get("retry_count", 0)
+        }
+        
     prose = state["director_prose"]
     timeline = state["timeline_context"]
     

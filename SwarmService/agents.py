@@ -949,10 +949,53 @@ def run_grand_arbiter(master_prompt: str, player_character_ledger: dict) -> dict
         scratchpad, prose = parse_dual_layer(raw_res)
         ruling = parse_ruling(raw_res)
         
-        prose_summary = ruling.get("ruling_summary", "L'arbitre a validé l'action.")
+        # Build a detailed, formatted referee verdict report card
+        outcome = ruling.get("outcome", "SUCCESS")
+        valid = "VALIDE" if ruling.get("action_valid", True) else "INVALIDE"
+        ruling_summary = ruling.get("ruling_summary", "L'arbitre a validé l'action.")
+        rule_citation = ruling.get("rule_citation", "Règles générales de Fallen")
+        notes = ruling.get("notes", "Aucune note additionnelle.")
+        
+        costs = ruling.get("resource_costs", {})
+        vit_lost = costs.get("vitality_lost", 0)
+        end_spent = costs.get("endurance_spent", 0)
+        res_spent = costs.get("reserve_spent", 0)
+        
+        stat_checks = ruling.get("stat_checks", [])
+        stat_checks_str = ""
+        if stat_checks:
+            for chk in stat_checks:
+                stat_checks_str += f"- **{chk.get('check', 'Confrontation')}** : Attaquant `{chk.get('attacker_stat')}` vs Défenseur `{chk.get('defender_stat')}` → **{chk.get('result', 'RÉSULTAT')}** (Dégâts: -{chk.get('vitality_damage', 0)} PV)\n"
+        else:
+            stat_checks_str = "- Aucun test de statistique direct enregistré.\n"
+            
+        verdict_card = f"""### ⚖️ VERDICT DU GRAND ARBITRE
+
+**Statut de l'action :** `{valid}` | **Résultat :** `{outcome}`
+
+**Résumé :** *{ruling_summary}*
+
+---
+
+#### 📊 ANALYSE TECHNIQUE (SCRATCHPAD)
+{scratchpad}
+
+---
+
+#### ⚔️ TESTS DE STATISTIQUES & IMPACTS
+* **Modifications de ressources :**
+  * Vitalité perdue : `-{vit_lost} PV`
+  * Endurance consommée : `-{end_spent}`
+  * Réserve magique consommée : `-{res_spent}`
+* **Confrontations de Statistiques :**
+{stat_checks_str}
+
+**Citation de Règle :** *{rule_citation}*
+**Notes de l'Arbitre :** *{notes}*"""
+
         return {
             "scratchpad": scratchpad,
-            "director_prose": prose_summary,
+            "director_prose": verdict_card,
             "director_entity_updates": ruling.get("entity_updates", []),
             "sparks_new_entity": False,
             "agent_metadata": ruling
