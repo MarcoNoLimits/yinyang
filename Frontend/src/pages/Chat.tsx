@@ -90,6 +90,8 @@ interface LorebookOpen {
   fiche: boolean;
 }
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 // ─── Utility: Render narrative markdown ──────────────────────────────────────
 
 function parseNarrative(text: string): React.ReactNode[] {
@@ -422,10 +424,39 @@ const Chat: React.FC = () => {
   // Load message history from DB when switching sessions
   useEffect(() => {
     let active = true;
+
+    // Load from local storage cache first for instant display
+    const cached = localStorage.getItem(`fallen_rp_messages_${currentSessionId}`);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed.map((m: any) => ({
+            id: m.id || crypto.randomUUID(),
+            role: m.role as 'player' | 'director' | 'npc',
+            content: m.content || '',
+            timestamp: m.timestamp ? new Date(m.timestamp) : new Date()
+          })) as Message[]);
+        }
+      } catch (e) {
+        console.error("Error reading cached messages", e);
+      }
+    } else {
+      // If no cache, initialize with a simple welcome message
+      setMessages([
+        {
+          id: crypto.randomUUID(),
+          role: 'director' as const,
+          content: WELCOME_MESSAGE,
+          timestamp: new Date(),
+        }
+      ]);
+    }
+
     const loadHistory = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`http://localhost:8000/chat/${currentSessionId}/history`);
+        const response = await fetch(`${API_BASE_URL}/chat/${currentSessionId}/history`);
         if (!response.ok) throw new Error("Failed to load history");
         const data = await response.json();
         if (active) {
@@ -439,39 +470,40 @@ const Chat: React.FC = () => {
           }
 
           if (data.history && data.history.length > 0) {
-            const mapped = data.history.map((m: any) => ({
+            const mapped: Message[] = data.history.map((m: any) => ({
               id: m.id || crypto.randomUUID(),
-              role: m.role,
+              role: m.role as 'player' | 'director' | 'npc',
               content: m.content,
               timestamp: new Date()
             }));
             setMessages(mapped);
+            // Save to cache
+            localStorage.setItem(`fallen_rp_messages_${currentSessionId}`, JSON.stringify(mapped));
           } else {
-            // Initialize with welcome message
-            setMessages([
-              {
-                id: crypto.randomUUID(),
-                role: 'director',
-                content: WELCOME_MESSAGE,
-                timestamp: new Date(),
-              }
-            ]);
+            // No history returned, but check if we already have local messages
+            // Only overwrite if cache was empty
+            if (!cached) {
+              const defaultMsg: Message[] = [
+                {
+                  id: crypto.randomUUID(),
+                  role: 'director',
+                  content: WELCOME_MESSAGE,
+                  timestamp: new Date(),
+                }
+              ];
+              setMessages(defaultMsg);
+              localStorage.setItem(`fallen_rp_messages_${currentSessionId}`, JSON.stringify(defaultMsg));
+            }
           }
         }
       } catch (err) {
         console.error("Error loading chat history:", err);
+        // Do NOT overwrite current messages with welcome message if we have cached messages!
+        // This prevents the chat from disappearing on connection loss!
         if (active) {
           setActiveRoute('NARRATIVE_DIRECTOR');
           setScratchpad('');
           setCharacterState(null);
-          setMessages([
-            {
-              id: crypto.randomUUID(),
-              role: 'director',
-              content: WELCOME_MESSAGE,
-              timestamp: new Date(),
-            }
-          ]);
         }
       } finally {
         if (active) {
@@ -508,12 +540,14 @@ const Chat: React.FC = () => {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, playerMsg]);
+    const updatedMessagesWithPlayer = [...messages, playerMsg];
+    setMessages(updatedMessagesWithPlayer);
+    localStorage.setItem(`fallen_rp_messages_${currentSessionId}`, JSON.stringify(updatedMessagesWithPlayer));
     setInputValue('');
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/chat', {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -571,7 +605,7 @@ const Chat: React.FC = () => {
 
       if (data.active_route === 'GRAND_ARBITER' && data.agent_metadata?.stat_checks) {
         // Grand Arbiter combat checks can inject a small ruling card
-        logger.info("Grand Arbiter ruling received:", data.agent_metadata);
+        console.info("Grand Arbiter ruling received:", data.agent_metadata);
       }
 
       if (data.world_event) {
@@ -611,7 +645,9 @@ const Chat: React.FC = () => {
         setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, location: data.location! } : s));
       }
 
-      setMessages((prev) => [...prev, ...newMessages]);
+      const finalMessagesList = [...updatedMessagesWithPlayer, ...newMessages];
+      setMessages(finalMessagesList);
+      localStorage.setItem(`fallen_rp_messages_${currentSessionId}`, JSON.stringify(finalMessagesList));
     } catch (err) {
       const errorMsg: Message = {
         id: crypto.randomUUID(),
@@ -620,7 +656,9 @@ const Chat: React.FC = () => {
           '**[ERREUR DE CONNEXION]** Les fils du destin sont rompus. Vérifiez la connexion au serveur Fallen.',
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMsg]);
+      const finalErrorList = [...updatedMessagesWithPlayer, errorMsg];
+      setMessages(finalErrorList);
+      localStorage.setItem(`fallen_rp_messages_${currentSessionId}`, JSON.stringify(finalErrorList));
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -687,11 +725,13 @@ const Chat: React.FC = () => {
       content: initialInput,
       timestamp: new Date(),
     };
-    setMessages([playerMsg]);
+    const initialMessages = [playerMsg];
+    setMessages(initialMessages);
+    localStorage.setItem(`fallen_rp_messages_${newId}`, JSON.stringify(initialMessages));
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/chat', {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -746,7 +786,9 @@ const Chat: React.FC = () => {
           activeNPC: updatedNPC,
           charId: data.char_id || s.charId
         } : s));
-        setMessages(prev => [...prev, ...newMessages]);
+        const finalMessages = [...initialMessages, ...newMessages];
+        setMessages(finalMessages);
+        localStorage.setItem(`fallen_rp_messages_${newId}`, JSON.stringify(finalMessages));
       }
     } catch (err) {
       console.error("Error creating session:", err);
@@ -764,10 +806,12 @@ const Chat: React.FC = () => {
     if (!confirm("Voulez-vous vraiment supprimer cette session RP ?")) return;
 
     try {
-      fetch(`http://localhost:8000/chat/${id}/clear`, { method: 'POST' });
+      fetch(`${API_BASE_URL}/chat/${id}/clear`, { method: 'POST' });
     } catch (err) {
       console.error(err);
     }
+
+    localStorage.removeItem(`fallen_rp_messages_${id}`);
 
     const filtered = sessions.filter(s => s.id !== id);
     setSessions(filtered);
@@ -1303,7 +1347,16 @@ const Chat: React.FC = () => {
                 <label style={modalStyles.label}>Type de Session</label>
                 <select
                   value={newChatType}
-                  onChange={(e) => setNewChatType(e.target.value as any)}
+                  onChange={(e) => {
+                    const type = e.target.value as any;
+                    setNewChatType(type);
+                    if (!newCharName.trim() || ['Arbitre', "L'Architecte", 'Le Forgeron', 'Adriel'].includes(newCharName.trim())) {
+                      if (type === 'GRAND_ARBITER_SOLO') setNewCharName('Arbitre');
+                      else if (type === 'QUEST_DESIGNER') setNewCharName("L'Architecte");
+                      else if (type === 'NPC_BUILDER') setNewCharName('Le Forgeron');
+                      else if (type === 'ROLEPLAY') setNewCharName('');
+                    }
+                  }}
                   style={modalStyles.select}
                 >
                   <option value="ROLEPLAY">⚔️ Histoire de Jeu de Rôle Standard</option>
