@@ -48,270 +48,12 @@ def call_llm(
         return get_mock_fallback(system_prompt, user_content, json_mode)
 
 def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) -> str:
-    """Provides valid JSON structural fallbacks for testing."""
-    content_lower = user_content.lower()
-    sys_lower = system_prompt.lower()
-    
-    # NEW v3 Agent mock fallbacks
-    if "run_narrative_director_v3" in sys_lower or "run_narrative_director_v3" in content_lower or "you are the narrative director — the living soul" in sys_lower:
-        return """<SCRATCHPAD>
-1. Character: Kaelith (Occulte, Rang 4). HP: 11/11, Endurance: 8/8.
-2. World: Darkness Returns era forest.
-3. Action: Casting fire spell. No contradiction.
-4. Anti-metagaming: Hidden traits are safe.
-</SCRATCHPAD>
-<PROSE>
-L'obscurité sylvestre frémit sous l'éclat soudain d'une flamme pourpre. Les ombres reculent, dévoilant les ruines antiques de Noah. Un grondement sourd s'élève de la terre bénie par Ezéchiel.
-</PROSE>
-<METADATA>
-{
-  "entity_updates": [
-    {"name": "Kaelith", "properties": {"endurance": -0.5}}
-  ],
-  "sparks_new_entity": false,
-  "scene_tags": ["combat", "exploration"]
-}
-</METADATA>"""
+    """No mock fallbacks — always calls the real LLM."""
+    raise RuntimeError(
+        "LLM call failed and no mock fallback is configured. "
+        "Check your OPENROUTER_API_KEY and network connectivity."
+    )
 
-    elif "run_worldsmith" in sys_lower or "run_worldsmith" in content_lower or "you are the worldsmith — the architect of undiscovered" in sys_lower:
-        return """<SCRATCHPAD>
-1. Location: Expanding Noah Forest.
-2. Generating points of interest and encounter tables.
-</SCRATCHPAD>
-<PROSE>
-Au-delà des sentiers connus s'ouvre une clairière baignée de murmures indicibles. Des fleurs bioluminescentes consument la clarté lunaire. Au centre, un autel de pierre noire marqué des runes d'Anubis sommeille sous le lierre.
-</PROSE>
-<METADATA>
-{
-  "generated_entities": [
-    {
-      "name": "Autel d'Anubis",
-      "entity_type": "LOCATION",
-      "properties": {"lore": "Un sanctuaire dédié au dieu des morts, scellé depuis l'Arc 2."}
-    }
-  ],
-  "encounter_table": [
-    {"creature": "Loup des Ombres", "tier": "Rare", "count": 1}
-  ],
-  "quest_data": {
-    "quest_id": "q_sanctuaire_anubis",
-    "status": "Not_Started",
-    "objectives": ["Inspecter l'autel noir", "Vaincre le loup des ombres"],
-    "faction_impact": {"Occulte": 10}
-  }
-}
-</METADATA>"""
-
-    elif "run_persona_blacksmith" in sys_lower or "run_persona_blacksmith" in content_lower or "you are the persona blacksmith — the forge" in sys_lower:
-        return """<SCRATCHPAD>
-1. NPC: Sandler Void.
-2. Faction: Hors-la-loi.
-3. Stats follow system rules.
-</SCRATCHPAD>
-<PROSE>
-Un homme d'âge mûr émerge de la brume sylvestre. Son manteau de cuir élimé porte les marques des cendres de Roahx. Un sourire sardonique étire ses lèvres tandis qu'il ajuste son tricorne. "Fallen est vaste pour un si voyager," murmure-t-il d'une voix rauque.
-</PROSE>
-<METADATA>
-{
-  "npc_profile": {
-    "name": "Sandler Void",
-    "faction": "Hors-la-loi",
-    "rank": "Rang 4",
-    "disposition": "Neutral",
-    "stats": {
-      "Force": 7, "Vitesse": 8, "Endurance": 8, "Resistance": 7,
-      "Reserve": 6, "Puissance": 7, "Mental": 8, "Reactivite": 9,
-      "Charisme": 8, "Intelligence": 8
-    },
-    "vitality": 12,
-    "techniques": [
-      {"name": "Tir de Precision", "rank": "A", "description": "Un tir d'arme à feu impossible à esquiver à moins de 10m."}
-    ],
-    "equipment": ["Pistolet à silex", "Manteau de cuir"],
-    "secret": "Il collabore secrètement avec les Noches.",
-    "vocal_pattern": "Voix rauque et ironique, tutoiement direct."
-  }
-}
-</METADATA>"""
-
-    elif "run_grand_arbiter" in sys_lower or "run_grand_arbiter" in content_lower or "you are the grand arbiter — the impartial mechanical" in sys_lower:
-        return """<SCRATCHPAD>
-1. Player Force: 7, Weapon bonus: +1 (Effective: 8).
-2. Target Resistance: 6.
-3. Difference: +2. Attacker wins.
-4. Vitality loss: -6 (lethal direct hit).
-</SCRATCHPAD>
-<RULING>
-{
-  "action_valid": true,
-  "ruling_summary": "L'attaque de Kaelith frappe l'adversaire de plein fouet, lui infligeant de lourds dégâts.",
-  "outcome": "SUCCESS",
-  "resource_costs": {
-    "endurance_spent": 1,
-    "reserve_spent": 0,
-    "vitality_lost": 0
-  },
-  "stat_checks": [
-    {
-      "check": "Force vs Resistance",
-      "attacker_stat": 8,
-      "defender_stat": 6,
-      "result": "HIT",
-      "vitality_damage": 6
-    }
-  ],
-  "entity_updates": [
-    {"name": "Cible", "properties": {"vitality": -6}}
-  ],
-  "rule_citation": "SystemeDeJeu Section 8: Puissance/Force vs Resistance",
-  "forbidden_flags": [],
-  "notes": "L'adversaire est chancelant."
-}
-</RULING>"""
-
-    # 1. Scanner Agent Mock
-    if "keyword extraction" in sys_lower or "scanner" in sys_lower:
-        found = []
-        for word in ["fallen", "conrak", "malakath", "anubis", "ezechiel", "khalian", "drahen", "nergal", "zeita", "elisa", "vanyr", "zephyr", "elsa", "noches", "atlantica", "noah", "baraen", "icetoon", "roahx", "kaos", "ithis", "celeste", "mundus", "eudenia", "sandler", "vladislaus", "gabriella", "pegasus", "eudenia", "renaissance"]:
-            if word in content_lower:
-                found.append(word)
-        if not found:
-            found = ["general"]
-        return json.dumps({"keywords": found})
-        
-    # 2. Narrative Director Mock
-    elif "narrative director" in sys_lower:
-        sparks = "spawn" in content_lower or "create" in content_lower or "artifact" in content_lower
-        
-        # If this is a critic feedback retry, adjust description to resolve contradiction
-        if "critic feedback" in content_lower:
-            player_action_part = content_lower.split("player action:")[-1] if "player action:" in content_lower else content_lower
-            if "deceased" in player_action_part or "dead" in player_action_part or "eleanor" in player_action_part:
-                world_event = "The character honors the memory of the fallen, refusing to speak for the dead. The camp remains quiet."
-            elif "impossible" in player_action_part or "moon" in player_action_part or "eudenia" in player_action_part or "scell" in player_action_part:
-                world_event = "A blinding pulse of divine energy repels the traveler. The sealed gates of Eudenia hold firm, inscribed with the runes of Lucas Saviore's binding oath."
-            else:
-                world_event = "The character adjusts their stance, correcting their previous actions to align with reality."
-            
-            return json.dumps({
-                "world_event": world_event,
-                "entity_updates": [],
-                "sparks_new_entity": sparks
-            })
-            
-        # Extract player action part to avoid matching words in the lorebook or timeline context
-        player_action_part = content_lower.split("player action:")[-1] if "player action:" in content_lower else content_lower
-        
-        # Simulating contradictions based on player input
-        if "avall'arh" in player_action_part or "avall" in player_action_part:
-            world_event = "L'ancien gardien Avall'arh se matérialise depuis les racines des grands arbres de Noah, sa présence imposant le silence à travers le bosquet."
-        elif "noches" in player_action_part:
-            world_event = "Une ombre se détache des ténèbres. Une silhouette en armure d'obsidienne s'avance. *Un membre de Noches.* 'Tu n'aurais pas dû venir ici,' murmure la silhouette, la main sur son épée."
-        elif "eudenia" in player_action_part:
-            world_event = "Une impulsion aveuglante d'énergie divine repousse le voyageur. Les portes scellées d'Eudenia restent fermes, gravées des runes du serment contraignant de Lucas Saviore."
-        else:
-            world_event = "Le monde de Fallen change autour de vous. Le vent transporte les Murmures de Fallen — quelque chose change dans l'équilibre des forces."
-            
-        return json.dumps({
-            "world_event": world_event,
-            "entity_updates": [],
-            "sparks_new_entity": sparks
-        })
-        
-    # 3. Continuity Critic Mock
-    elif "continuity inspector" in sys_lower or "the critic" in sys_lower:
-        # If the narrative draft contains contradiction indicators, reject it
-        if "deceased" in content_lower or "dead npc" in content_lower or "est mort" in content_lower or "décédé" in content_lower or "eleanor" in content_lower:
-            return json.dumps({
-                "approved": False,
-                "correction_reason": "Action détectée de la part d'un PNJ décédé dans le contexte de la chronologie."
-            })
-        elif "eudenia" in content_lower:
-            return json.dumps({
-                "approved": False,
-                "correction_reason": "Eudenia est scellée par le serment divin de Lucas Saviore. Aucun mortel ne peut y entrer sans briser le sceau."
-            })
-            
-        return json.dumps({
-            "approved": True,
-            "correction_reason": ""
-        })
-        
-    # 4. Persona Agent Mock
-    elif "persona emulation" in sys_lower or "chatbot" in sys_lower:
-        char = "Character"
-        if "sandler void" in sys_lower or "sandler void" in content_lower:
-            char = "Sandler Void"
-        elif "vladislaus" in sys_lower or "vladislaus" in content_lower:
-            char = "Vladislaus Nocturnus"
-        elif "avall'arh" in sys_lower or "avall'arh" in content_lower or "avall" in sys_lower:
-            char = "Avall'arh"
-        elif "gabriella" in sys_lower or "gabriella" in content_lower:
-            char = "Gabriella"
-        elif "drafhorz" in sys_lower or "drafhorz" in content_lower:
-            char = "Drafhorz Lazuli Varn Emreis"
-
-        if char == "Sandler Void":
-            return json.dumps({
-                "character_output": "*incline son chapeau usé avec un sourire en coin* 'Mon nom est Sandler Void. Et oui, je suis aussi dangereux que ce que tu as entendu dire. Probablement plus.'"
-            })
-        elif char == "Vladislaus Nocturnus":
-            return json.dumps({
-                "character_output": "*des yeux cramoisis brillent dans les ténèbres* 'Un autre fou attiré à Ithis par la rumeur. Tu empestes le vivant. Comme c'est... rafraîchissant.'"
-            })
-        elif char == "Avall'arh":
-            return json.dumps({
-                "character_output": "*l'esprit ancien se tourne, des feuilles tourbillonnant sous un vent invisible* 'Les racines de Noah sont profondes. Je garde ces terres depuis bien avant que ton espèce ne foule cette terre.'"
-            })
-        elif char == "Gabriella":
-            return json.dumps({
-                "character_output": "*des ailes de lumière de saphir se déploient* 'Par le jugement de Zeita — déclare ton but en Céleste. Rapidement.'"
-            })
-        return json.dumps({
-            "character_output": "*un étranger en habits de voyage lève les yeux de sa carte* 'Fallen est vaste, voyageur. Qu'est-ce qui t'amène dans ces contrées ?'"
-        })
-
-        
-    # 5. Chronicler Agent Mock
-    elif "event extraction" in sys_lower or "chronicler" in sys_lower:
-        return json.dumps({
-            "timeline_summary": "Le joueur a exploré le monde de Fallen, interagissant avec ses habitants ou ses lieux.",
-            "state_deltas": {}
-        })
-        
-    # 6. Soul Forger Mock
-    elif "soul forger" in sys_lower:
-        return json.dumps({
-            "name": "Kaelith the Wanderer",
-            "faction": "Hors-la-loi",
-            "attributes": {"health": 120, "strength": 14},
-            "inventory": ["carved_bone_dagger", "ancient_map_fragment"],
-            "disposition_to_player": "Neutral",
-            "short_backstory": "Un ancien membre du Dragon Noir qui est devenu renégat après l'Arc 2, errant désormais entre Roahx et Kaos pour vendre des secrets au plus offrant."
-        })
-        
-    # 7. Itemizer Mock
-    elif "artifact forge" in sys_lower:
-        return json.dumps({
-            "item_name": "Fragment d'Eudenia",
-            "item_type": "Divine Artifact",
-            "weight_kg": 0.3,
-            "properties": {"divine_energy": 85, "access_restricted": True},
-            "lore_blurb": "Un éclat d'énergie divine cristallisée provenant des portes scellées d'Eudenia. Il bourdonne du souvenir du serment contraignant de Lucas Saviore."
-        })
-        
-    # 8. Quest Architect Mock
-    elif "quest architect" in sys_lower:
-        return json.dumps({
-            "quest_id": "q_whispers_of_noches",
-            "status": "In_Progress",
-            "objectives_completed": ["investigate_missing_ships"],
-            "faction_reputation_impact": {"noches": -20, "kaos_harbor_authority": 15}
-        })
-        
-    if json_mode:
-        return "{}"
-    return "Fallback generic text"
 
 # --- Agent Runners ---
 
@@ -759,65 +501,150 @@ CRITICAL RULES:
 
 GRAND_ARBITER_PROMPT = """IDENTITY: You are the Grand Arbiter — the impartial mechanical judge of Fallen's universe.
 You do not tell stories. You do not write prose. You compute OUTCOMES based on the strict
-mathematical and logical rules of Fallen's game system.
+mathematical and logical rules of Fallen's game system as defined in the SystemeDeJeu below.
 
 You are a REFEREE, not a storyteller. Your rulings are objective, non-biased, and based
-solely on the numbers and rules provided.
+solely on the numbers and rules provided in the scene description.
+
+==========================================================================
+SYSTEME DE JEU — FALLEN (RÈGLES OFFICIELLES — VERSION COMPLÈTE INTÉGRÉE)
+==========================================================================
+
+■ VITALITÉ (Points de vie)
+- Base 10 pour tout le monde.
+- Rang 3/4 : +1 vitalité max (→ 11). Rang 5 : +1 (→ 12). Rang 6 Élu : +2 (→ 14).
+- Éveillé : +2 (→ 16). God Hand : +2 (→ 18). Apôtre Divin : +2 (→ 20).
+
+■ CONFRONTATION Force/Puissance vs Résistance (Section 8)
+- Résistance = Attaque : perte de -2 en vitalité.
+- Attaque > Résistance de +1 : -6 vitalité (frappe mortelle directe).
+- Attaque > Résistance de +2 : -10 vitalité (mort directe dans certains cas).
+- Résistance > Attaque de +1 : -1 vitalité.
+- Résistance > Attaque de +2 : -1 vitalité par 2 attaques encaissées.
+- Résistance > Attaque de +3 ou plus : AUCUN dégât.
+- Bonus arme tranchante : +1 à la Force effective de l'attaquant.
+- Force < Résistance de 2 : Impossible de transpercer la peau.
+- Force < Résistance de 1 : Peut trancher la chair, pas les os.
+- Force = Résistance : Dégâts importants.
+
+■ CONFRONTATION DE SORTS/TECHNIQUES (Section 9)
+• Ordre de supériorité : Divin > SSS > SS > S > A > B > C
+• Cas général — Puissance/Force égale :
+  - Deux sorts du même rang s'annulent mutuellement.
+  - Si l'un a 2 rangs de plus (ex: Rang A vs Rang C), le rang A gagne sans match.
+  - Obligatoirement Rang S minimum pour annuler un Rang S.
+• Cas spéciaux RANG SUPRÉMATIE :
+  - Un sort Rang SS bat TOUT sort inférieur à SS peu importe la puissance.
+  - Un sort Rang SSS bat TOUT sort inférieur à SSS peu importe la puissance.
+  - Un sort DIVIN bat tout.
+• Puissance/Force de l'un = autre -1 : Il faut 2 sorts du moins puissant vs 1 sort du plus puissant. En 1v1, la puissance supérieure gagne (sauf ss/sss).
+• Puissance/Force de l'un = autre -2 : Le plus puissant gagne sans problème.
+• ANNULATION MUTUELLE : Deux techniques du MÊME rang qui s'affrontent directement s'annulent totalement. Aucun dégât de technique sur les utilisateurs. Seulement les actions physiques qui suivent sont résolues.
+• SUPRÉMATIE DE RANG : Rang S contre Rang A → le Rang S détruit complètement le Rang A. L'utilisateur du Rang A ne reçoit aucune protection de sa technique.
+
+■ RESSOURCES — ENDURANCE (techniques physiques)
+• Factions Force forte + Honneur + Hors-la-loi :
+  SSS=-3, SS=-2, S=-1, A=-0.5, B=-0.25, C=-1/6, D=-1/8
+• Autres factions :
+  SSS=-4, SS=-3, S=-2, A=-1, B=-0.5, C=-1/3, D=-1/5
+- 6 tours d'efforts physiques continus : -1 endurance.
+- Endurance à 0 : Le personnage s'évanouit.
+
+■ RESSOURCES — RÉSERVE MAGIQUE (sorts)
+• Factions Puissance forte (Occulte, Sainteté, Ange, etc.) :
+  SSS=-3, SS=-2, S=-1, A=-0.5, B=-0.25, C=-1/6, D=-1/8
+• Autres factions :
+  SSS=-4, SS=-3, S=-2, A=-1, B=-0.5, C=-1/3, D=-1/5
+- 6 tours de magie continue : -1 réserve.
+- Réserve à 0 : Impossible d'utiliser la magie, invisible à la perception.
+
+■ ATTAQUES DE BASE
+- Rang D. Même règles que ci-dessus pour l'endurance.
+- P10 = F10 (égalité). Si écart de 1 : 2 attaques du plus faible = 1 attaque du plus fort. Écart de 2+ : le plus fort gagne sans contestation.
+- Une attaque de base perd TOUJOURS face à une technique si la différence est de 2 ou moins en faveur de la technique.
+
+■ PORTÉE DES SORTS
+  Rang C: 10m | Rang B: 20m | Rang A: 50m | Rang S: 100m (250/500m pour Élu).
+  SS: 1000m (stat d'attaque >11 requis). SSS: 2000m (stat 15 minimum).
+
+■ COOLDOWNS STANDARD
+  Rang C/D: 1 tour | Rang B: 2 tours | Rang A: 3 tours | Rang S: 5 tours.
+
+■ INVOCATIONS
+- Rang S min. Durée max 7 tours.
+- Stats Rang S invocation : 39/50 (+10 max sur stats). Une stat limitée à 8/8.
+- Invocation S : 2 attaques S, le reste A.
+- Non-Élu : 1 invocation Rang S max sur le terrain.
+
+■ TECHNIQUES DE BOOST
+- Boost Rang A : +1 sur 3 stats max. Boost Rang S : +2 sur 2-3 stats ou +1 sur 5 stats.
+- Pas de boost SS/SSS. Durée max 7 tours. Impossible de cumuler des boosts.
+
+■ RÉACTIVITÉ vs VITESSE (Section 10)
+- Réactivité < Vitesse de -1 : peut réagir mais difficilement, sans marge de manœuvre.
+- Mouvements complexes/feintes : nécessite éléments extérieurs si réac inférieure.
+
+■ TECHNIQUES MENTALES (Section 11)
+- Mental égal : la cible s'en rend compte, peut sacrifier 1 pt endurance pour se défaire.
+- Mental inférieur de 1 : sacrifice de 4 pts endurance pour résister (si INT >= lanceur-1).
+- Mental inférieur de 2 : sacrifice de 8 pts endurance (si INT = lanceur).
+
+■ STATISTIQUES DES RANGS (Factions 6 rangs)
+- Rang 1-2 : Stats faibles 5, normales 6, fortes 7.
+- Rang 3-4 : Stats faibles 7, normales 8, fortes 9. Vitalité max 11.
+- Rang 5 : Stats faibles 8, normales 9, fortes 10. Vitalité max 12.
+- Rang 6 (Élu) : Stats faibles 9, normales 10, fortes 11. Vitalité max 14.
+- Éveillé : Stats faibles 11, normales 12, fortes 13. Vitalité max 16.
+- God Hand : Stats faibles 14, normales 15, fortes 16. Vitalité max 18.
+- Apôtre Divin : Stats faibles 18, normales 19, fortes 20. Vitalité max 20.
+
+■ GÉNÉRAUX
+- Vitesse d'un sort = Puissance de l'individu -1.
+- Vitesse d'un saut = Force -1. Vitesse de chute = Vitesse de saut -3.
+- Résistance > Attaque de 3+ : Aucune dégât, peu importe le rang (exception restrictions spécifiques de sorts).
+- Une différence de 1 dans un affrontement de statistique = victoire du supérieur.
+- Une différence de 2 = victoire écrasante, quels que soient les rangs.
+
+==========================================================================
+FIN DES RÈGLES OFFICIELLES
+==========================================================================
 
 YOUR RESPONSIBILITIES:
-1. VALIDATE player actions against their Character Ledger:
-   - Does the player have sufficient Endurance to use this technique?
-   - Does the player's Force/Puissance meet the minimum for this action?
-   - Is the player's Reserve sufficient for this spell rank?
-   - What are the resource costs of this action?
+1. READ STATS EXACTLY AS DECLARED:
+   - CRITICAL: Use the Force, Résistance, Puissance, and all other stats EXACTLY as stated
+     in the scene description. If the player declares Force 11, compute with 11. Period.
+   - If a character sheet is provided use it. If not, work purely from the text.
+   - NEVER invent, estimate, or substitute a stat that wasn't explicitly given.
 
-2. RESOLVE combat exchanges using Fallen's stat confrontation rules:
-   - Force/Puissance vs Resistance: Compute Vitality loss per the damage table.
-   - Speed vs Reactivity: Determine if attacks land or are dodged.
-   - Mental vs Mental: Resolve psychic confrontations and endurance sacrifice costs.
-   - Spell rank confrontations: Apply the rank hierarchy (Divine > SSS > SS > S > A > B > C).
+2. APPLY RANK SUPREMACY BEFORE COMPUTING DAMAGE:
+   - Resolve all technique rank clashes FIRST, before any stat calculations.
+   - Rank S vs Rank A → Rank S DESTROYS Rank A instantly. Rank A user has zero protection.
+   - Rank S vs Rank S → MUTUAL CANCELLATION. Both techniques negate each other. No technique
+     damage to either user. Only follow-up physical actions are resolved.
 
-3. VALIDATE custom techniques submitted by players:
-   - Check if the technique's rank is accessible at the player's current rank.
-   - Verify stat requirements are met.
-   - Flag any forbidden magic types (time magic, reality alteration, resurrection,
-     divination, irreversible magic, demiurgic magic, anti-magic, radioactivity).
+3. RESOLVE ALL EXCHANGES STEP BY STEP:
+   - List every confrontation in order: technique clashes first, then stat confrontations.
+   - Show each calculation explicitly in the SCRATCHPAD.
 
-4. COMPUTE environmental difficulty:
-   - Given the player's rank and stats, determine appropriate challenge tier.
-   - Calculate encounter balance for multi-enemy scenarios.
+4. MANDATORY SITUATION SUMMARY:
+   - In the "notes" field, state WHAT caused damage to WHOM and the CURRENT BATTLEFIELD STATE:
+     who is still standing, resources consumed, tactical positions after this exchange.
 
-STAT CONFRONTATION RULES (INTERNALIZED):
-- Equal stats: -2 Vitality to the one who gets hit.
-- Attacker > Defender by +1: -6 Vitality (lethal direct hit).
-- Attacker > Defender by +2: -10 Vitality (potential instant death).
-- Defender > Attacker by +1: -1 Vitality.
-- Defender > Attacker by +2: -1 Vitality per 2 hits taken.
-- Defender > Attacker by +3 or more: No damage taken.
-- Weapon bonus: +1 to attacker's effective Force.
-- Force < Resistance by 2: Cannot penetrate skin regardless of weapon.
-- Force < Resistance by 1: Can cut flesh but not bone.
-- Force = Resistance: Heavy damages.
+5. NO SHEET REQUIRED:
+   - If no character sheet is provided, adjudicate solely from what is described in the scene.
+   - Do not refuse or delay because a stat is missing — if it's not stated, note it as "non fourni"
+     and estimate based on the described rank/level if available, or skip that sub-check.
 
-RESOURCE COST RULES (INTERNALIZED):
-- Strong-stat factions: SSS=-3, SS=-2, S=-1, A=-0.5, B=-0.25, C=-1/6, D=-1/8
-- Other factions: SSS=-4, SS=-3, S=-2, A=-1, B=-0.5, C=-1/3, D=-1/5
-- 6 turns of continuous magical use: -1 Reserve.
-- Reserve at 0: No magic, no magical detection (invisible to perception).
-
-OUTPUT FORMAT (MANDATORY — NO PROSE, PURE ADJUDICATION):
-You MUST structure your entire output in two sections using XML-style delimiters.
-
+OUTPUT FORMAT (MANDATORY):
 <SCRATCHPAD>
-[Show your complete mathematical work. Every calculation must be explicit.
-Reference specific rules from the game system. Show stat comparisons step by step.]
+[Show all mathematical work step by step. Reference exact rule citations from the SystemeDeJeu above.]
 </SCRATCHPAD>
 
 <RULING>
 {
   "action_valid": true | false,
   "ruling_summary": "One-sentence objective ruling in French",
-  "outcome": "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE" | "BLOCKED",
+  "outcome": "SUCCESS" | "PARTIAL_SUCCESS" | "FAILURE" | "BLOCKED" | "ANNULATION_MUTUELLE",
   "resource_costs": {
     "endurance_spent": 0,
     "reserve_spent": 0,
@@ -825,29 +652,38 @@ Reference specific rules from the game system. Show stat comparisons step by ste
   },
   "stat_checks": [
     {
-      "check": "Force vs Resistance",
-      "attacker_stat": 8,
-      "defender_stat": 7,
+      "check": "Force vs Résistance",
+      "attacker_name": "Fafnir",
+      "attacker_stat": 11,
+      "defender_name": "The Sunless",
+      "defender_stat": 9,
       "result": "HIT",
-      "vitality_damage": 6
+      "vitality_damage": 6,
+      "rule": "Attaque > Résistance de +2 → -10 PV"
+    }
+  ],
+  "technique_resolutions": [
+    {
+      "attacker_technique": "Pulse Rang S",
+      "defender_technique": "Lames d'air Rang A",
+      "resolution": "SUPREMATIE: Rang S détruit Rang A. Lames annulées.",
+      "rule": "Section 9: Ordre de supériorité S > A"
     }
   ],
   "entity_updates": [
-    {"name": "Entity", "properties": {"vitality": -6, "endurance": -1}}
+    {"name": "The Sunless", "properties": {"vitality": -10}}
   ],
-  "rule_citation": "SystemeDeJeu Section 8: Puissance/Force vs Resistance",
+  "rule_citation": "SystemeDeJeu Section 9 — Confrontation de sorts et techniques",
   "forbidden_flags": [],
-  "notes": "Additional context for the Narrative Director to incorporate"
+  "notes": "Résumé complet de la situation après l'échange."
 }
 </RULING>
 
 CRITICAL RULES:
-- You issue VERDICTS, not narratives. The Narrative Director translates your ruling
-  into story prose.
-- You MUST show your mathematical work in the scratchpad.
-- Never fudge numbers in the player's favor or against them. You are IMPARTIAL.
+- VERDICTS ONLY. No narrative prose. No storytelling.
+- Show every calculation. Be impartial.
 - If a technique uses forbidden magic, flag it and DENY the action.
-- All text output (ruling_summary, notes) MUST be in French. Keys in English.
+- All text values (ruling_summary, notes, resolution) MUST be in French. Keys in English.
 - No Chinese characters, no markdown code blocks, no commentary outside the format.
 """
 
@@ -938,11 +774,17 @@ def run_persona_blacksmith(master_prompt: str, player_character_ledger: dict) ->
             "agent_metadata": {}
         }
 
-def run_grand_arbiter(master_prompt: str, player_character_ledger: dict) -> dict:
-    """Evaluates rules and mechanical actions (V3)."""
+def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -> dict:
+    """Evaluates rules and mechanical actions. Works with or without a character sheet."""
+    # Build a lean payload — no DB context, just the raw scene description + optional sheet
+    if player_character_ledger:
+        ledger_section = f"FICHE PERSONNAGE (si disponible):\n{json.dumps(player_character_ledger, indent=2, ensure_ascii=False)}\n\n"
+    else:
+        ledger_section = "FICHE PERSONNAGE : Non fournie — adjudication basée uniquement sur le texte.\n\n"
+
     user_payload = (
-        f"PLAYER_CHARACTER_LEDGER:\n{json.dumps(player_character_ledger, indent=2)}\n\n"
-        f"MASTER_PROMPT:\n{master_prompt}"
+        f"{ledger_section}"
+        f"DESCRIPTION DE LA SCÈNE / ACTION À ARBITRER:\n{player_input}"
     )
     try:
         raw_res = call_llm(GRAND_ARBITER_PROMPT, user_payload, json_mode=False, temperature=0.15, max_tokens=2048)

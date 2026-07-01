@@ -617,7 +617,8 @@ const Chat: React.FC = () => {
         });
       }
 
-      if (data.character_output) {
+      // Only show NPC dialogue for non-Arbiter routes (no "Le Monde" after a verdict)
+      if (data.character_output && data.active_route !== 'GRAND_ARBITER') {
         const npcName = data.npc_name ?? activeNPC ?? 'Le Monde';
         newMessages.push({
           id: crypto.randomUUID(),
@@ -639,6 +640,7 @@ const Chat: React.FC = () => {
           });
         }
       }
+
 
       if (data.location) {
         setActiveLocation(data.location);
@@ -703,6 +705,14 @@ const Chat: React.FC = () => {
     setNewChatType('ROLEPLAY');
 
     let initialInput = "";
+    
+    // Grand Arbiter: open blank — user provides their own combat description
+    if (chatType === 'GRAND_ARBITER_SOLO') {
+      setMessages([]);
+      localStorage.setItem(`fallen_rp_messages_${newId}`, JSON.stringify([]));
+      return;
+    }
+
     if (scenario.trim()) {
       initialInput += `Scénario / Contexte : ${scenario.trim()}\n\n`;
     }

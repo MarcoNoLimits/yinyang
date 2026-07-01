@@ -442,17 +442,30 @@ def run_persona_blacksmith_node(state: SwarmState) -> Dict[str, Any]:
         "agent_metadata": metadata
     }
 
+def run_grand_arbiter_fast_entry(state: SwarmState) -> Dict[str, Any]:
+    """Fast-path entry for GRAND_ARBITER: skips Scanner/Librarian/Weaver/Router entirely."""
+    logger.info("Grand Arbiter fast-path: bypassing full pipeline.")
+    return {
+        "active_route": "GRAND_ARBITER",
+        "master_prompt": state["player_input"],  # not used, but kept for state consistency
+        "extracted_keywords": [],
+        "retrieved_lore": [],
+        "player_character_ledger": {},
+        "critic_approved": True,
+        "critic_feedback": "",
+        "retry_count": 0,
+        "final_dialogue": "",
+        "extracted_summary": "Arbitrage de combat.",
+        "state_deltas": {}
+    }
+
 def run_grand_arbiter_node(state: SwarmState) -> Dict[str, Any]:
-    """Grand Arbiter Node (v3): Mechanics and rules check."""
+    """Grand Arbiter Node (v3): Mechanics and rules check — uses raw player_input only."""
     logger.info("Running Grand Arbiter (v3) Node...")
-    master_prompt = state["master_prompt"]
-    ledger = state["player_character_ledger"]
-    
-    if state.get("retry_count", 0) > 0:
-        master_prompt += f"\n\nCRITIC FEEDBACK: Please adjust. {state['critic_feedback']}"
-        
-    res = run_grand_arbiter(master_prompt, ledger)
-    
+    player_input = state["player_input"]
+    # Pass the character ledger only if it was populated (it won't be in fast-path)
+    ledger = state.get("player_character_ledger") or None
+    res = run_grand_arbiter(player_input, ledger)
     return {
         "scratchpad": res.get("scratchpad", ""),
         "director_prose": res.get("director_prose", ""),
@@ -501,6 +514,12 @@ def run_continuity_critic(state: SwarmState) -> Dict[str, Any]:
 def run_persona_emulator(state: SwarmState) -> Dict[str, Any]:
     """Persona Node: Emulates character voice over approved narrative outcome."""
     logger.info("Running Persona Emulator Node...")
+    
+    # Skip persona entirely for GRAND_ARBITER — no NPC dialogue after a ruling
+    if state.get("active_route") == "GRAND_ARBITER" or state.get("agent_override") == "GRAND_ARBITER":
+        logger.info("Grand Arbiter active. Skipping Persona Emulator.")
+        return {"final_dialogue": ""}
+
     char_name = state.get("char_name")
     char_personality = state.get("char_personality", "")
     outcome = state["director_prose"]
@@ -654,7 +673,7 @@ def run_ledger_guard(state: SwarmState) -> Dict[str, Any]:
 # Define State Machine
 workflow = StateGraph(SwarmState)
 
-# Add Nodes
+# Standard pipeline nodes
 workflow.add_node("Scanner", run_keyword_scanner)
 workflow.add_node("Librarian", run_lore_librarian)
 workflow.add_node("Weaver", run_prompt_weaver)
@@ -664,6 +683,7 @@ workflow.add_node("Router", run_intent_router_node)
 workflow.add_node("NarrativeDirector", run_narrative_director_node)
 workflow.add_node("Worldsmith", run_worldsmith_node)
 workflow.add_node("PersonaBlacksmith", run_persona_blacksmith_node)
+workflow.add_node("ArbiterFastEntry", run_grand_arbiter_fast_entry)  # fast-path entry
 workflow.add_node("GrandArbiter", run_grand_arbiter_node)
 
 workflow.add_node("Critic", run_continuity_critic)
@@ -671,13 +691,32 @@ workflow.add_node("Persona", run_persona_emulator)
 workflow.add_node("Chronicler", run_event_chronicler)
 workflow.add_node("LedgerGuard", run_ledger_guard)
 
-# Add Edges
-workflow.set_entry_point("Scanner")
+# ----------------------------------------------------------------
+# Entry point: dispatch immediately if GRAND_ARBITER override set
+# ----------------------------------------------------------------
+def initial_dispatcher(state: SwarmState) -> str:
+    """Skip the full pipeline when Grand Arbiter is the explicit override."""
+    if state.get("agent_override") == "GRAND_ARBITER":
+        return "ArbiterFastEntry"
+    return "Scanner"
+
+workflow.set_conditional_entry_point(
+    initial_dispatcher,
+    {
+        "ArbiterFastEntry": "ArbiterFastEntry",
+        "Scanner": "Scanner",
+    }
+)
+
+# Standard pipeline flow
 workflow.add_edge("Scanner", "Librarian")
 workflow.add_edge("Librarian", "Weaver")
 workflow.add_edge("Weaver", "Router")
 
-# Router dispatches based on active_route
+# ArbiterFastEntry skips to GrandArbiter directly
+workflow.add_edge("ArbiterFastEntry", "GrandArbiter")
+
+# Router dispatches based on active_route (standard pipeline only)
 def route_dispatcher(state: SwarmState) -> str:
     route_map = {
         "NARRATIVE_DIRECTOR": "NarrativeDirector",
@@ -698,11 +737,13 @@ workflow.add_conditional_edges(
     }
 )
 
-# All agents route to Critic for validation
+# Standard agents → Critic
 workflow.add_edge("NarrativeDirector", "Critic")
 workflow.add_edge("Worldsmith", "Critic")
 workflow.add_edge("PersonaBlacksmith", "Critic")
-workflow.add_edge("GrandArbiter", "Critic")
+
+# GrandArbiter skips Critic entirely — goes straight to Persona (which will also skip itself)
+workflow.add_edge("GrandArbiter", "Persona")
 
 def critic_retry_router(state: SwarmState) -> str:
     """Routes back to the active agent node if Critic rejects draft, up to 3 retries."""
@@ -718,7 +759,6 @@ workflow.add_conditional_edges(
         "NarrativeDirector": "NarrativeDirector",
         "Worldsmith": "Worldsmith",
         "PersonaBlacksmith": "PersonaBlacksmith",
-        "GrandArbiter": "GrandArbiter"
     }
 )
 
