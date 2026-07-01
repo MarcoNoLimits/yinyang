@@ -4,6 +4,7 @@ import React, {
   useRef,
   useCallback,
 } from 'react';
+import QuestCard, { QuestMeta } from '../components/QuestCard';
 
 // ─── Lorebook Data ───────────────────────────────────────────────────────────
 
@@ -63,6 +64,8 @@ interface Message {
   content: string;
   npcName?: string;
   timestamp: Date;
+  activeRoute?: string;
+  questMeta?: QuestMeta;
 }
 
 interface Entity {
@@ -255,6 +258,10 @@ function MessageBubble({ message }: { message: Message }) {
   const isPlayer = message.role === 'player';
   const isDirector = message.role === 'director';
 
+  if (message.questMeta && message.questMeta.content_type) {
+    return <QuestCard prose={message.content} meta={message.questMeta} />;
+  }
+
   if (isDirector) {
     return (
       <div style={styles.directorMessage}>
@@ -311,7 +318,7 @@ const Chat: React.FC = () => {
     activeNPC: string | null;
     createdAt: string;
     charId?: string;
-    chatType?: 'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO';
+    chatType?: 'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO' | 'SCENARIO_ARCHITECT';
     scenario?: string;
     charLore?: string;
     thumbnail?: string;
@@ -369,7 +376,7 @@ const Chat: React.FC = () => {
   const [newScenario, setNewScenario] = useState('');
   const [newCharLore, setNewCharLore] = useState('');
   const [newCharThumbnail, setNewCharThumbnail] = useState('');
-  const [newChatType, setNewChatType] = useState<'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO'>('ROLEPLAY');
+  const [newChatType, setNewChatType] = useState<'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO' | 'SCENARIO_ARCHITECT'>('ROLEPLAY');
 
   const updateSessionAgentOverride = useCallback((override: string | null) => {
     setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, agentOverride: override } : s));
@@ -675,7 +682,7 @@ const Chat: React.FC = () => {
     scenario: string = '',
     lore: string = '',
     thumbnail: string = '',
-    chatType: 'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO' = 'ROLEPLAY'
+    chatType: 'ROLEPLAY' | 'NPC_BUILDER' | 'QUEST_DESIGNER' | 'GRAND_ARBITER_SOLO' | 'SCENARIO_ARCHITECT' = 'ROLEPLAY'
   ) => {
     if (!name.trim()) return;
     const newId = crypto.randomUUID();
@@ -706,8 +713,8 @@ const Chat: React.FC = () => {
 
     let initialInput = "";
     
-    // Grand Arbiter: open blank — user provides their own combat description
-    if (chatType === 'GRAND_ARBITER_SOLO') {
+    // Grand Arbiter or Scenario Architect: open blank — user provides their own input
+    if (chatType === 'GRAND_ARBITER_SOLO' || chatType === 'SCENARIO_ARCHITECT') {
       setMessages([]);
       localStorage.setItem(`fallen_rp_messages_${newId}`, JSON.stringify([]));
       return;
@@ -1070,6 +1077,7 @@ const Chat: React.FC = () => {
                   <option value="WORLDSMITH">🗺️ WORLDSMITH</option>
                   <option value="PERSONA_BLACKSMITH">👤 PERSONA BLACKSMITH</option>
                   <option value="GRAND_ARBITER">⚖️ GRAND ARBITRE</option>
+                  <option value="SCENARIO_ARCHITECT">🏰 ARCHITECTE DE SCÉNARIO</option>
                 </select>
               </div>
 
@@ -1087,6 +1095,7 @@ const Chat: React.FC = () => {
                   {activeSess.chatType === 'ROLEPLAY' ? '⚔️ HISTOIRE RP' :
                    activeSess.chatType === 'NPC_BUILDER' ? '👤 FABRIQUE DE PNJ' :
                    activeSess.chatType === 'QUEST_DESIGNER' ? '🗺️ QUÊTES & ÉVÉNEMENTS' :
+                   activeSess.chatType === 'SCENARIO_ARCHITECT' ? '🏰 ARCHITECTE DE SCÉNARIO' :
                    '⚖️ ARBITRE SOLO'}
                 </div>
               )}
@@ -1362,6 +1371,7 @@ const Chat: React.FC = () => {
                     setNewChatType(type);
                     if (!newCharName.trim() || ['Arbitre', "L'Architecte", 'Le Forgeron', 'Adriel'].includes(newCharName.trim())) {
                       if (type === 'GRAND_ARBITER_SOLO') setNewCharName('Arbitre');
+                      else if (type === 'SCENARIO_ARCHITECT') setNewCharName("L'Architecte");
                       else if (type === 'QUEST_DESIGNER') setNewCharName("L'Architecte");
                       else if (type === 'NPC_BUILDER') setNewCharName('Le Forgeron');
                       else if (type === 'ROLEPLAY') setNewCharName('');
@@ -1373,6 +1383,7 @@ const Chat: React.FC = () => {
                   <option value="NPC_BUILDER">👤 Fabrique de PNJ (Créateur de Personnage)</option>
                   <option value="QUEST_DESIGNER">🗺️ Concepteur de Quêtes & Événements</option>
                   <option value="GRAND_ARBITER_SOLO">⚖️ Arbitrage de Combat / Rulings Solo</option>
+                  <option value="SCENARIO_ARCHITECT">🏰 Architecte de Scénario (Quêtes, Événements, Murmures, Donjons)</option>
                 </select>
               </div>
 

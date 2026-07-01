@@ -32,7 +32,8 @@ from agents import (
     run_narrative_director_v3,
     run_worldsmith,
     run_persona_blacksmith,
-    run_grand_arbiter
+    run_grand_arbiter,
+    run_scenario_architect
 )
 from router import classify_intent
 
@@ -474,17 +475,93 @@ def run_grand_arbiter_node(state: SwarmState) -> Dict[str, Any]:
         "agent_metadata": res.get("agent_metadata", {})
     }
 
+
+# ============================================================
+# Scenario Architect — Fast-Path Nodes
+# Mirrors the Grand Arbiter fast-path: bypasses Scanner /
+# Librarian / Weaver / Router entirely.
+# ============================================================
+
+def run_scenario_architect_fast_entry(state: SwarmState) -> Dict[str, Any]:
+    """Fast-path entry for SCENARIO_ARCHITECT: skips full pipeline."""
+    logger.info("Scenario Architect fast-path: bypassing full pipeline.")
+    return {
+        "active_route": "SCENARIO_ARCHITECT",
+        "master_prompt": state["player_input"],   # kept for state consistency
+        "extracted_keywords": [],
+        "retrieved_lore": [],
+        "player_character_ledger": {},
+        "critic_approved": True,
+        "critic_feedback": "",
+        "retry_count": 0,
+        "final_dialogue": "",
+        "extracted_summary": "Création de scénario par l'Architecte.",
+        "state_deltas": {}
+    }
+
+
+def run_scenario_architect_node(state: SwarmState) -> Dict[str, Any]:
+    """Scenario Architect Node (v3): Generates Quêtes, Événements, Murmures, Donjons."""
+    logger.info("Running Scenario Architect (v3) Node...")
+    universe_id = state.get("universe_id", "f0000000-0000-0000-0000-000000000001")
+
+    # Use raw player_input directly (no weaver context — GM content creation)
+    gm_request = state["player_input"]
+
+    if state.get("retry_count", 0) > 0:
+        gm_request += f"\n\nCRITIC FEEDBACK: Please adjust. {state['critic_feedback']}"
+
+    res = run_scenario_architect(gm_request)
+
+    prose = res.get("director_prose", "")
+    sparks = res.get("sparks_new_entity", False)
+    metadata = res.get("agent_metadata", {})
+    content_type = res.get("content_type", "QUÊTE")
+
+    # Persist the generated scenario entity to the database
+    if sparks:
+        # Determine entity name and type for the DB ledger
+        entity_name = (
+            metadata.get("title")              # QUÊTE / ÉVÉNEMENT / DONJON
+            or metadata.get("edition")         # MURMURE
+            or f"Scenario_{content_type}"
+        )
+        db_entity_type = {
+            "QUÊTE":      "QUEST",
+            "ÉVÉNEMENT":  "EVENT",
+            "MURMURE":    "MURMURE",
+            "DONJON":     "DUNGEON"
+        }.get(content_type, "QUEST")
+
+        update_entity_state(
+            universe_id,
+            entity_name,
+            db_entity_type,
+            metadata
+        )
+        logger.info(f"Scenario Architect persisted: {entity_name} ({db_entity_type})")
+
+    return {
+        "scratchpad": res.get("scratchpad", ""),
+        "director_prose": prose,
+        "director_entity_updates": [],
+        "sparks_new_entity": sparks,
+        "agent_metadata": metadata
+    }
+
 # --- Critic, Persona, Chronicler & Ledger Guard Nodes ---
 
 def run_continuity_critic(state: SwarmState) -> Dict[str, Any]:
     """Critic Node: Evaluates Director's output for contradictions."""
     logger.info("Running Continuity Critic Node...")
-    
-    # Bypass Critic if active_route is GRAND_ARBITER or agent_override is GRAND_ARBITER
+
+    # Bypass Critic if active_route is GRAND_ARBITER or SCENARIO_ARCHITECT
+    # (Arbiter verdicts are objective; Architect content is pre-validated by the LLM)
     active_route = state.get("active_route")
     agent_override = state.get("agent_override")
-    if active_route == "GRAND_ARBITER" or agent_override == "GRAND_ARBITER":
-        logger.info("Grand Arbiter active. Bypassing Continuity Critic validation.")
+    if active_route in {"GRAND_ARBITER", "SCENARIO_ARCHITECT"} or \
+       agent_override in {"GRAND_ARBITER", "SCENARIO_ARCHITECT"}:
+        logger.info(f"{active_route or agent_override} active. Bypassing Continuity Critic validation.")
         return {
             "critic_approved": True,
             "critic_feedback": "",
@@ -514,10 +591,13 @@ def run_continuity_critic(state: SwarmState) -> Dict[str, Any]:
 def run_persona_emulator(state: SwarmState) -> Dict[str, Any]:
     """Persona Node: Emulates character voice over approved narrative outcome."""
     logger.info("Running Persona Emulator Node...")
-    
-    # Skip persona entirely for GRAND_ARBITER — no NPC dialogue after a ruling
-    if state.get("active_route") == "GRAND_ARBITER" or state.get("agent_override") == "GRAND_ARBITER":
-        logger.info("Grand Arbiter active. Skipping Persona Emulator.")
+
+    # Skip persona for GRAND_ARBITER and SCENARIO_ARCHITECT — neither produces NPC dialogue
+    active_route = state.get("active_route")
+    agent_override = state.get("agent_override")
+    if active_route in {"GRAND_ARBITER", "SCENARIO_ARCHITECT"} or \
+       agent_override in {"GRAND_ARBITER", "SCENARIO_ARCHITECT"}:
+        logger.info(f"{active_route or agent_override} active. Skipping Persona Emulator.")
         return {"final_dialogue": ""}
 
     char_name = state.get("char_name")
@@ -683,8 +763,10 @@ workflow.add_node("Router", run_intent_router_node)
 workflow.add_node("NarrativeDirector", run_narrative_director_node)
 workflow.add_node("Worldsmith", run_worldsmith_node)
 workflow.add_node("PersonaBlacksmith", run_persona_blacksmith_node)
-workflow.add_node("ArbiterFastEntry", run_grand_arbiter_fast_entry)  # fast-path entry
+workflow.add_node("ArbiterFastEntry", run_grand_arbiter_fast_entry)       # fast-path entry
 workflow.add_node("GrandArbiter", run_grand_arbiter_node)
+workflow.add_node("ScenarioFastEntry", run_scenario_architect_fast_entry) # fast-path entry
+workflow.add_node("ScenarioArchitect", run_scenario_architect_node)
 
 workflow.add_node("Critic", run_continuity_critic)
 workflow.add_node("Persona", run_persona_emulator)
@@ -692,19 +774,23 @@ workflow.add_node("Chronicler", run_event_chronicler)
 workflow.add_node("LedgerGuard", run_ledger_guard)
 
 # ----------------------------------------------------------------
-# Entry point: dispatch immediately if GRAND_ARBITER override set
+# Entry point: dispatch immediately if fast-path override is set
 # ----------------------------------------------------------------
 def initial_dispatcher(state: SwarmState) -> str:
-    """Skip the full pipeline when Grand Arbiter is the explicit override."""
-    if state.get("agent_override") == "GRAND_ARBITER":
+    """Skip the full pipeline when Grand Arbiter or Scenario Architect is the explicit override."""
+    override = state.get("agent_override")
+    if override == "GRAND_ARBITER":
         return "ArbiterFastEntry"
+    if override == "SCENARIO_ARCHITECT":
+        return "ScenarioFastEntry"
     return "Scanner"
 
 workflow.set_conditional_entry_point(
     initial_dispatcher,
     {
-        "ArbiterFastEntry": "ArbiterFastEntry",
-        "Scanner": "Scanner",
+        "ArbiterFastEntry":  "ArbiterFastEntry",
+        "ScenarioFastEntry": "ScenarioFastEntry",
+        "Scanner":           "Scanner",
     }
 )
 
@@ -713,16 +799,20 @@ workflow.add_edge("Scanner", "Librarian")
 workflow.add_edge("Librarian", "Weaver")
 workflow.add_edge("Weaver", "Router")
 
-# ArbiterFastEntry skips to GrandArbiter directly
+# ArbiterFastEntry → GrandArbiter
 workflow.add_edge("ArbiterFastEntry", "GrandArbiter")
+
+# ScenarioFastEntry → ScenarioArchitect
+workflow.add_edge("ScenarioFastEntry", "ScenarioArchitect")
 
 # Router dispatches based on active_route (standard pipeline only)
 def route_dispatcher(state: SwarmState) -> str:
     route_map = {
         "NARRATIVE_DIRECTOR": "NarrativeDirector",
-        "WORLDSMITH": "Worldsmith",
+        "WORLDSMITH":         "Worldsmith",
         "PERSONA_BLACKSMITH": "PersonaBlacksmith",
-        "GRAND_ARBITER": "GrandArbiter"
+        "GRAND_ARBITER":      "GrandArbiter",
+        "SCENARIO_ARCHITECT": "ScenarioArchitect"
     }
     return route_map.get(state.get("active_route"), "NarrativeDirector")
 
@@ -730,10 +820,11 @@ workflow.add_conditional_edges(
     "Router",
     route_dispatcher,
     {
-        "NarrativeDirector": "NarrativeDirector",
-        "Worldsmith": "Worldsmith",
-        "PersonaBlacksmith": "PersonaBlacksmith",
-        "GrandArbiter": "GrandArbiter"
+        "NarrativeDirector":  "NarrativeDirector",
+        "Worldsmith":         "Worldsmith",
+        "PersonaBlacksmith":  "PersonaBlacksmith",
+        "GrandArbiter":       "GrandArbiter",
+        "ScenarioArchitect":  "ScenarioArchitect"
     }
 )
 
@@ -741,8 +832,10 @@ workflow.add_conditional_edges(
 workflow.add_edge("NarrativeDirector", "Critic")
 workflow.add_edge("Worldsmith", "Critic")
 workflow.add_edge("PersonaBlacksmith", "Critic")
+workflow.add_edge("ScenarioArchitect", "Critic")
 
-# GrandArbiter skips Critic entirely — goes straight to Persona (which will also skip itself)
+# GrandArbiter and ScenarioArchitect bypass Critic entirely
+# (Arbiter: objective verdict; Architect: GM content, pre-validated)
 workflow.add_edge("GrandArbiter", "Persona")
 
 def critic_retry_router(state: SwarmState) -> str:
@@ -755,10 +848,11 @@ workflow.add_conditional_edges(
     "Critic",
     critic_retry_router,
     {
-        "Persona": "Persona",
+        "Persona":           "Persona",
         "NarrativeDirector": "NarrativeDirector",
-        "Worldsmith": "Worldsmith",
+        "Worldsmith":        "Worldsmith",
         "PersonaBlacksmith": "PersonaBlacksmith",
+        "ScenarioArchitect": "ScenarioArchitect",
     }
 )
 

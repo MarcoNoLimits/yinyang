@@ -65,6 +65,9 @@ async def chat_swarm(payload: ChatRequest):
                 agent_override = "WORLDSMITH"
             elif payload.chat_type == "GRAND_ARBITER_SOLO":
                 agent_override = "GRAND_ARBITER"
+            elif payload.chat_type == "SCENARIO_ARCHITECT":
+                agent_override = "SCENARIO_ARCHITECT"
+
 
         initial_state = {
             "session_id": payload.session_id,

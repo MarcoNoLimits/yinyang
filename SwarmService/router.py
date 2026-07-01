@@ -4,14 +4,14 @@ from agents import call_llm
 
 logger = logging.getLogger("router")
 
-VALID_ROUTES = {"NARRATIVE_DIRECTOR", "WORLDSMITH", "PERSONA_BLACKSMITH", "GRAND_ARBITER"}
+VALID_ROUTES = {"NARRATIVE_DIRECTOR", "WORLDSMITH", "PERSONA_BLACKSMITH", "GRAND_ARBITER", "SCENARIO_ARCHITECT"}
 
 ROUTER_SYSTEM_PROMPT = """You are the Intent Classification Router for a fantasy RPG narrative engine.
 
-Analyze the player's action and context, then classify the intent into exactly ONE of four categories.
+Analyze the player's action and context, then classify the intent into exactly ONE of five categories.
 
 CATEGORIES:
-- NARRATIVE_DIRECTOR: Standard gameplay — combat actions, dialogue, exploration, reactions, 
+- NARRATIVE_DIRECTOR: Standard gameplay — combat actions, dialogue, exploration, reactions,
   story progression, entering rooms, interacting with known NPCs, using abilities.
   This is the DEFAULT route for any ambiguous input.
 
@@ -31,10 +31,18 @@ CATEGORIES:
   Keywords: "can I do this", "attack", "cast", "use technique", "check stats", "validate",
   "how much damage", "is this allowed", "rule check".
 
+- SCENARIO_ARCHITECT: GM/admin scenario creation — the requester is a Game Master building
+  new content: a quest, a world event, a newspaper edition (Murmures), or a dungeon module.
+  This route is for CREATION, not player play. The input is a GM instruction, not a player
+  action within the fiction.
+  Keywords: "créer une quête", "générer un événement", "murmures de fallen", "donjon",
+  "nouveau scénario", "create quest", "new event", "dungeon layout", "génère un",
+  "rédige un", "construis un donjon", "édition du journal", "scénario".
+
 OUTPUT FORMAT:
 Return a single JSON object:
 {
-  "route": "NARRATIVE_DIRECTOR" | "WORLDSMITH" | "PERSONA_BLACKSMITH" | "GRAND_ARBITER",
+  "route": "NARRATIVE_DIRECTOR" | "WORLDSMITH" | "PERSONA_BLACKSMITH" | "GRAND_ARBITER" | "SCENARIO_ARCHITECT",
   "reasoning": "<brief_one_sentence_explanation>"
 }
 
@@ -44,7 +52,9 @@ CRITICAL RULES:
 3. If the player's action contains BOTH narrative and mechanical elements (e.g., "I attack
    the guard with my fire sword"), route to NARRATIVE_DIRECTOR — the Arbiter will be
    consulted separately if stat validation is needed.
-4. Do not output any Chinese characters or boilerplate text.
+4. SCENARIO_ARCHITECT takes priority over WORLDSMITH when the input is clearly a GM creation
+   request (uses imperative verbs like "crée", "génère", "construis", "rédige").
+5. Do not output any Chinese characters or boilerplate text.
 """
 
 def classify_intent(master_prompt: str, player_input: str) -> str:
