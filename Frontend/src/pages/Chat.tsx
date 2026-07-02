@@ -95,6 +95,35 @@ interface LorebookOpen {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
+const fetchWithRetry = async (url: string, options: RequestInit = {}, retries = 2, delay = 1000): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds timeout
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    
+    if (!response.ok && response.status >= 500 && retries > 0) {
+      console.warn(`Fetch failed with status ${response.status}. Retrying in ${delay}ms...`);
+      await new Promise(res => setTimeout(res, delay));
+      return fetchWithRetry(url, options, retries - 1, delay * 2);
+    }
+    
+    return response;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (retries > 0 && error.name !== 'AbortError') {
+      console.warn(`Fetch network error: ${error.message || error}. Retrying in ${delay}ms...`);
+      await new Promise(res => setTimeout(res, delay));
+      return fetchWithRetry(url, options, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+};
+
 // ─── Utility: Render narrative markdown ──────────────────────────────────────
 
 function parseNarrative(text: string): React.ReactNode[] {
@@ -463,7 +492,7 @@ const Chat: React.FC = () => {
     const loadHistory = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/chat/${currentSessionId}/history`);
+        const response = await fetchWithRetry(`${API_BASE_URL}/chat/${currentSessionId}/history`);
         if (!response.ok) throw new Error("Failed to load history");
         const data = await response.json();
         if (active) {
@@ -554,7 +583,7 @@ const Chat: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/chat`, {
+      const response = await fetchWithRetry(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -748,7 +777,7 @@ const Chat: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/chat`, {
+      const response = await fetchWithRetry(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -823,7 +852,7 @@ const Chat: React.FC = () => {
     if (!confirm("Voulez-vous vraiment supprimer cette session RP ?")) return;
 
     try {
-      fetch(`${API_BASE_URL}/chat/${id}/clear`, { method: 'POST' });
+      fetchWithRetry(`${API_BASE_URL}/chat/${id}/clear`, { method: 'POST' });
     } catch (err) {
       console.error(err);
     }

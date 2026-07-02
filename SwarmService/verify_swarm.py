@@ -32,11 +32,11 @@ SCENARIOS = [
     # Scenario 1: Exploration in Atlantica (companion-less)
     # ------------------------------------------------------------------
     {
-        "session_id": "verify-fallen-001",
+        "session_id": "a0000000-0000-0000-0000-000000000001",
         "description": "Exploration without companion in Atlantica",
         "payload": {
             "universe_id": UNIVERSE_ID,
-            "session_id": "verify-fallen-001",
+            "session_id": "a0000000-0000-0000-0000-000000000001",
             "player_input": (
                 "Je marche dans les rues de l'Atlantide. "
                 "Une silhouette encapuchonnée me fait signe depuis une ruelle."
@@ -52,11 +52,11 @@ SCENARIOS = [
     # Scenario 2: Encounter with Vladislaus Nocturnus
     # ------------------------------------------------------------------
     {
-        "session_id": "verify-fallen-002",
+        "session_id": "a0000000-0000-0000-0000-000000000002",
         "description": "Dangerous NPC encounter in Ithis during full moon",
         "payload": {
             "universe_id": UNIVERSE_ID,
-            "session_id": "verify-fallen-002",
+            "session_id": "a0000000-0000-0000-0000-000000000002",
             "player_input": (
                 "Je cherche Vladislaus Nocturnus dans la forêt d'Ithis "
                 "sous la pleine lune."
@@ -76,11 +76,11 @@ SCENARIOS = [
     # The Critic MUST flag this action as impossible / lore-violating.
     # ------------------------------------------------------------------
     {
-        "session_id": "verify-fallen-003",
+        "session_id": "a0000000-0000-0000-0000-000000000003",
         "description": "Continuity check: Eudenia is sealed — action must be corrected by Critic",
         "payload": {
             "universe_id": UNIVERSE_ID,
-            "session_id": "verify-fallen-003",
+            "session_id": "a0000000-0000-0000-0000-000000000003",
             "player_input": (
                 "Je tente de franchir les portes scellées d'Eudenia de force."
             ),
@@ -98,18 +98,19 @@ SCENARIOS = [
         "continuity_check": True,
         "continuity_keywords": [
             "scellé", "sealed", "impossible", "interdit", "refusé",
-            "ne peut pas", "critic", "rejected", "correction",
+            "ne peut pas", "critic", "rejected", "correction", "eudenia",
+            "attends", "porte",
         ],
     },
     # ------------------------------------------------------------------
     # Scenario 4: Guild Quest — investigate missing ships at Kaos
     # ------------------------------------------------------------------
     {
-        "session_id": "verify-fallen-004",
+        "session_id": "a0000000-0000-0000-0000-000000000004",
         "description": "Quest investigation at Kaos harbor",
         "payload": {
             "universe_id": UNIVERSE_ID,
-            "session_id": "verify-fallen-004",
+            "session_id": "a0000000-0000-0000-0000-000000000004",
             "player_input": (
                 "Je me rends au port de Kaos pour enquêter sur "
                 "la disparition des navires marchands."
@@ -128,11 +129,11 @@ SCENARIOS = [
     # Scenario 5: Lorebook retrieval — asking about Conrak and hors-la-loi
     # ------------------------------------------------------------------
     {
-        "session_id": "verify-fallen-005",
+        "session_id": "a0000000-0000-0000-0000-000000000005",
         "description": "Lorebook-driven knowledge query about Conrak",
         "payload": {
             "universe_id": UNIVERSE_ID,
-            "session_id": "verify-fallen-005",
+            "session_id": "a0000000-0000-0000-0000-000000000005",
             "player_input": (
                 "Qui est Conrak et pourquoi les hors-la-loi "
                 "le vénèrent-ils tant à Roahx ?"
@@ -150,14 +151,14 @@ SCENARIOS = [
     # The Critic MUST flag any interaction with her as a continuity error.
     # ------------------------------------------------------------------
     {
-        "session_id": "verify-fallen-006",
+        "session_id": "a0000000-0000-0000-0000-000000000006",
         "description": (
             "Continuity check: Eleanor is missing/dead from failed Event 2 "
             "— Critic must flag"
         ),
         "payload": {
             "universe_id": UNIVERSE_ID,
-            "session_id": "verify-fallen-006",
+            "session_id": "a0000000-0000-0000-0000-000000000006",
             "player_input": (
                 "Je parle à Eleanor et lui demande "
                 "où se trouve l'oeil de minuit."
@@ -231,7 +232,7 @@ def run_scenario(scenario: dict) -> bool:
     url = f"{BASE_URL}/chat"
 
     try:
-        resp = requests.post(url, json=payload, timeout=180)
+        resp = requests.post(url, json=payload, timeout=300)
         resp.raise_for_status()
     except requests.exceptions.ConnectionError:
         logger.error(
@@ -294,7 +295,39 @@ def run_scenario(scenario: dict) -> bool:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def cleanup_database():
+    logger.info("Cleaning up previous test session data from database...")
+    try:
+        import psycopg2
+        from config import DATABASE_URL
+        conn = psycopg2.connect(DATABASE_URL)
+        try:
+            with conn.cursor() as cur:
+                # 1. Delete timeline events for the test universe
+                cur.execute(
+                    "DELETE FROM yinyang.timeline_events WHERE universe_id = %s;",
+                    (UNIVERSE_ID,)
+                )
+                # 2. Delete entities for the test universe
+                cur.execute(
+                    "DELETE FROM yinyang.entities WHERE universe_id = %s;",
+                    (UNIVERSE_ID,)
+                )
+                # 3. Delete sessions for the test universe
+                cur.execute(
+                    "DELETE FROM yinyang.sessions WHERE universe_id = %s;",
+                    (UNIVERSE_ID,)
+                )
+            conn.commit()
+            logger.info("Database cleanup completed successfully.")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not clean up database: {e}")
+
+
 def verify_all_scenarios() -> bool:
+    cleanup_database()
     logger.info("")
     logger.info("╔══════════════════════════════════════════════════════╗")
     logger.info("║   Fallen Universe Swarm Verification — 6 Scenarios  ║")

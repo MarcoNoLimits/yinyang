@@ -1,18 +1,22 @@
 import json
 import logging
+import asyncio
 import httpx
 from config import OPENROUTER_API_KEY, OPENROUTER_URL, MODEL_NAME
 
 logger = logging.getLogger("agents")
 
-def call_llm(
+# Global reusable async client for LLM API calls (reuses TCP / TLS connections)
+async_client = httpx.AsyncClient(timeout=60.0)
+
+async def call_llm(
     system_prompt: str,
     user_content: str,
     json_mode: bool = False,
     temperature: float = 0.2,
     max_tokens: int = 4096
 ) -> str:
-    """Executes a call to the DeepSeek model via OpenRouter API."""
+    """Executes an asynchronous call to the DeepSeek model via OpenRouter API with exponential backoff retries."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -33,19 +37,31 @@ def call_llm(
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
         
-    try:
-        # Check if using mock key
-        if "sk-or-v1-mock-key" in OPENROUTER_API_KEY:
-            return get_mock_fallback(system_prompt, user_content, json_mode)
-            
-        with httpx.Client(timeout=45.0) as client:
-            response = client.post(f"{OPENROUTER_URL}/chat/completions", headers=headers, json=payload)
+    # Check if using mock key
+    if "sk-or-v1-mock-key" in OPENROUTER_API_KEY:
+        return get_mock_fallback(system_prompt, user_content, json_mode)
+
+    max_retries = 3
+    base_delay = 0.5  # seconds
+    
+    for attempt in range(max_retries + 1):
+        try:
+            response = await async_client.post(
+                f"{OPENROUTER_URL}/chat/completions",
+                headers=headers,
+                json=payload
+            )
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        logger.error(f"Error calling OpenRouter LLM: {e}. Falling back to structural mock.")
-        return get_mock_fallback(system_prompt, user_content, json_mode)
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            if attempt == max_retries:
+                logger.error(f"Error calling OpenRouter LLM after {max_retries} retries: {e}. Falling back.")
+                return get_mock_fallback(system_prompt, user_content, json_mode)
+            
+            delay = base_delay * (2 ** attempt)
+            logger.warning(f"OpenRouter LLM call failed with {e}. Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...")
+            await asyncio.sleep(delay)
 
 def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) -> str:
     """No mock fallbacks — always calls the real LLM."""
@@ -56,7 +72,7 @@ def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) ->
 
 # --- Agent Runners ---
 
-def run_scanner_agent(player_input: str) -> list:
+async def run_scanner_agent(player_input: str) -> list:
     """Extracts search keywords from the player input."""
     system_prompt = (
         "You are a Keyword Extraction Agent (Entity Scanner) for a fantasy roleplaying engine.\n"
@@ -72,13 +88,13 @@ def run_scanner_agent(player_input: str) -> list:
         "4. If no keywords are found, return {\"keywords\": [\"general\"]}.\n"
     )
     try:
-        raw_res = call_llm(system_prompt, player_input, json_mode=True, temperature=0.2, max_tokens=256)
+        raw_res = await call_llm(system_prompt, player_input, json_mode=True, temperature=0.2, max_tokens=256)
         res = json.loads(raw_res)
         return res.get("keywords", [])
     except Exception:
         return ["general"]
 
-def run_director_agent(master_prompt: str, entities_state_str: str) -> dict:
+async def run_director_agent(master_prompt: str, entities_state_str: str) -> dict:
     """Simulates the narrative action and computes state changes (Legacy)."""
     system_prompt = (
         "You are the Narrative Director (Game Master) of the Fallen universe — a rich, god-created fantasy world of 9 continents, 12 divine deities, and warring factions.\n"
@@ -108,7 +124,7 @@ def run_director_agent(master_prompt: str, entities_state_str: str) -> dict:
     )
     user_payload = f"ENTITIES_STATUS:\n{entities_state_str}\n\nMASTER_PROMPT:\n{master_prompt}"
     try:
-        raw_res = call_llm(system_prompt, user_payload, json_mode=True, temperature=0.85, max_tokens=4096)
+        raw_res = await call_llm(system_prompt, user_payload, json_mode=True, temperature=0.85, max_tokens=4096)
         return json.loads(raw_res)
     except Exception:
         return {
@@ -117,7 +133,7 @@ def run_director_agent(master_prompt: str, entities_state_str: str) -> dict:
             "sparks_new_entity": False
         }
 
-def run_critic_agent(draft_prose: str, timeline_summary: str) -> dict:
+async def run_critic_agent(draft_prose: str, timeline_summary: str) -> dict:
     """Audits draft prose against the global timeline for continuity errors."""
     system_prompt = (
         "You are the Continuity Inspector (The Critic) for an interactive fantasy narrative.\n"
@@ -136,13 +152,13 @@ def run_critic_agent(draft_prose: str, timeline_summary: str) -> dict:
     )
     user_payload = f"TIMELINE_CONTEXT:\n{timeline_summary}\n\nDRAFT_PROSE:\n{draft_prose}"
     try:
-        raw_res = call_llm(system_prompt, user_payload, json_mode=True, temperature=0.1, max_tokens=1024)
+        raw_res = await call_llm(system_prompt, user_payload, json_mode=True, temperature=0.1, max_tokens=1024)
         return json.loads(raw_res)
     except Exception:
         return {"approved": True, "correction_reason": ""}
 
-def run_persona_agent(char_name: str, char_personality: str, narrative_outcome: str, player_input: str) -> str:
-    """Translates the outcome into the character's voice and dialog."""
+async def run_persona_agent(char_name: str, char_personality: str, narrative_outcome: str, player_input: str) -> str:
+    """Translates the outcome into the character's voice and dialogue."""
     system_prompt = (
         f"You are the Persona Emulation Agent for the character: {char_name}.\n"
         f"Universe Context: The world of Fallen — a god-created fantasy realm currently in the Arc of La Renaissance.\n"
@@ -163,13 +179,13 @@ def run_persona_agent(char_name: str, char_personality: str, narrative_outcome: 
     )
     user_payload = f"PLAYER_INPUT:\n{player_input}\n\nNARRATIVE_OUTCOME:\n{narrative_outcome}"
     try:
-        raw_res = call_llm(system_prompt, user_payload, json_mode=True, temperature=0.75, max_tokens=2048)
+        raw_res = await call_llm(system_prompt, user_payload, json_mode=True, temperature=0.75, max_tokens=2048)
         res = json.loads(raw_res)
         return res.get("character_output", "...")
     except Exception:
         return "..."
 
-def run_chronicler_agent(player_input: str, response_output: str) -> dict:
+async def run_chronicler_agent(player_input: str, response_output: str) -> dict:
     """Summarizes a round of roleplay into an objective update."""
     system_prompt = (
         "You are the Event Extraction Agent (The Chronicler) for a fantasy simulation.\n"
@@ -188,14 +204,14 @@ def run_chronicler_agent(player_input: str, response_output: str) -> dict:
     )
     user_payload = f"PLAYER_INPUT: {player_input}\nRESPONSE: {response_output}"
     try:
-        raw_res = call_llm(system_prompt, user_payload, json_mode=True, temperature=0.2, max_tokens=1024)
+        raw_res = await call_llm(system_prompt, user_payload, json_mode=True, temperature=0.2, max_tokens=1024)
         return json.loads(raw_res)
     except Exception:
         return {"timeline_summary": "Interaction completed.", "state_deltas": {}}
 
 # --- Generative Forge Agents (Legacy) ---
 
-def run_soul_forger(npc_name: str, context: str) -> dict:
+async def run_soul_forger(npc_name: str, context: str) -> dict:
     """Assembles a full stats sheet for a new NPC."""
     system_prompt = (
         "You are the Soul Forger (NPC Constructor) for a fantasy RPG.\n"
@@ -215,12 +231,12 @@ def run_soul_forger(npc_name: str, context: str) -> dict:
         "3. The 'short_backstory' MUST be written in French. Faction name must match one of: Sainteté, Occulte, Honneur, Ange, Sang-pur, Esprit, Astre, Viking, Démon, Elder, Hybride, Hors-la-loi. JSON keys/structure remain in English.\n"
     )
     try:
-        raw_res = call_llm(system_prompt, f"NPC Name: {npc_name}\nContext: {context}", json_mode=True, temperature=0.8, max_tokens=2048)
+        raw_res = await call_llm(system_prompt, f"NPC Name: {npc_name}\nContext: {context}", json_mode=True, temperature=0.8, max_tokens=2048)
         return json.loads(raw_res)
     except Exception:
         return {}
 
-def run_itemizer(item_name: str, context: str) -> dict:
+async def run_itemizer(item_name: str, context: str) -> dict:
     """Constructs technical stats and attributes for a new item card."""
     system_prompt = (
         "You are the Artifact Forge Agent (The Itemizer) for a fantasy RPG.\n"
@@ -239,12 +255,12 @@ def run_itemizer(item_name: str, context: str) -> dict:
         "3. The 'lore_blurb' MUST be written strictly in French. JSON keys/structure remain in English.\n"
     )
     try:
-        raw_res = call_llm(system_prompt, f"Item: {item_name}\nContext: {context}", json_mode=True, temperature=0.8, max_tokens=1024)
+        raw_res = await call_llm(system_prompt, f"Item: {item_name}\nContext: {context}", json_mode=True, temperature=0.8, max_tokens=1024)
         return json.loads(raw_res)
     except Exception:
         return {}
 
-def run_quest_architect(quest_details: str, context: str) -> dict:
+async def run_quest_architect(quest_details: str, context: str) -> dict:
     """Drafts quest objectives and faction standing results."""
     system_prompt = (
         "You are the Quest Architect for a fantasy RPG.\n"
@@ -262,7 +278,7 @@ def run_quest_architect(quest_details: str, context: str) -> dict:
         "3. The objectives in 'objectives_completed' MUST be written strictly in French. JSON keys/structure remain in English.\n"
     )
     try:
-        raw_res = call_llm(system_prompt, f"Details: {quest_details}\nContext: {context}", json_mode=True, temperature=0.7, max_tokens=2048)
+        raw_res = await call_llm(system_prompt, f"Details: {quest_details}\nContext: {context}", json_mode=True, temperature=0.7, max_tokens=2048)
         return json.loads(raw_res)
     except Exception:
         return {}
@@ -912,7 +928,7 @@ ABSOLUTE PROHIBITIONS:
 - The SCRATCHPAD must verify: does the content_type match the request? Are all mandatory fields present?
 """
 
-def run_narrative_director_v3(master_prompt: str, entities_state_str: str, player_character_ledger: dict) -> dict:
+async def run_narrative_director_v3(master_prompt: str, entities_state_str: str, player_character_ledger: dict) -> dict:
     """Processes narrative action using dual-layer prompt constraints (V3)."""
     user_payload = (
         f"PLAYER_CHARACTER_LEDGER:\n{json.dumps(player_character_ledger, indent=2)}\n\n"
@@ -920,7 +936,7 @@ def run_narrative_director_v3(master_prompt: str, entities_state_str: str, playe
         f"MASTER_PROMPT:\n{master_prompt}"
     )
     try:
-        raw_res = call_llm(NARRATIVE_DIRECTOR_V3_PROMPT, user_payload, json_mode=False, temperature=0.85, max_tokens=4096)
+        raw_res = await call_llm(NARRATIVE_DIRECTOR_V3_PROMPT, user_payload, json_mode=False, temperature=0.85, max_tokens=4096)
         scratchpad, prose = parse_dual_layer(raw_res)
         metadata = parse_metadata(raw_res)
         
@@ -941,14 +957,14 @@ def run_narrative_director_v3(master_prompt: str, entities_state_str: str, playe
             "agent_metadata": {}
         }
 
-def run_worldsmith(master_prompt: str, player_character_ledger: dict) -> dict:
+async def run_worldsmith(master_prompt: str, player_character_ledger: dict) -> dict:
     """Generates maps, environments, and quest sheets (V3)."""
     user_payload = (
         f"PLAYER_CHARACTER_LEDGER:\n{json.dumps(player_character_ledger, indent=2)}\n\n"
         f"MASTER_PROMPT:\n{master_prompt}"
     )
     try:
-        raw_res = call_llm(WORLDSMITH_PROMPT, user_payload, json_mode=False, temperature=0.9, max_tokens=6144)
+        raw_res = await call_llm(WORLDSMITH_PROMPT, user_payload, json_mode=False, temperature=0.9, max_tokens=6144)
         scratchpad, prose = parse_dual_layer(raw_res)
         metadata = parse_metadata(raw_res)
         
@@ -970,14 +986,14 @@ def run_worldsmith(master_prompt: str, player_character_ledger: dict) -> dict:
             "agent_metadata": {}
         }
 
-def run_persona_blacksmith(master_prompt: str, player_character_ledger: dict) -> dict:
+async def run_persona_blacksmith(master_prompt: str, player_character_ledger: dict) -> dict:
     """Fleshes out new NPCs and factions (V3)."""
     user_payload = (
         f"PLAYER_CHARACTER_LEDGER:\n{json.dumps(player_character_ledger, indent=2)}\n\n"
         f"MASTER_PROMPT:\n{master_prompt}"
     )
     try:
-        raw_res = call_llm(PERSONA_BLACKSMITH_PROMPT, user_payload, json_mode=False, temperature=0.8, max_tokens=4096)
+        raw_res = await call_llm(PERSONA_BLACKSMITH_PROMPT, user_payload, json_mode=False, temperature=0.8, max_tokens=4096)
         scratchpad, prose = parse_dual_layer(raw_res)
         metadata = parse_metadata(raw_res)
         
@@ -999,7 +1015,7 @@ def run_persona_blacksmith(master_prompt: str, player_character_ledger: dict) ->
             "agent_metadata": {}
         }
 
-def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -> dict:
+async def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -> dict:
     """Evaluates rules and mechanical actions. Works with or without a character sheet."""
     # Build a lean payload — no DB context, just the raw scene description + optional sheet
     if player_character_ledger:
@@ -1012,7 +1028,7 @@ def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -
         f"DESCRIPTION DE LA SCÈNE / ACTION À ARBITRER:\n{player_input}"
     )
     try:
-        raw_res = call_llm(GRAND_ARBITER_PROMPT, user_payload, json_mode=False, temperature=0.15, max_tokens=2048)
+        raw_res = await call_llm(GRAND_ARBITER_PROMPT, user_payload, json_mode=False, temperature=0.15, max_tokens=2048)
         scratchpad, prose = parse_dual_layer(raw_res)
         ruling = parse_ruling(raw_res)
         
@@ -1037,18 +1053,18 @@ def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -
             stat_checks_str = "- Aucun test de statistique direct enregistré.\n"
             
         verdict_card = f"""### ⚖️ VERDICT DU GRAND ARBITRE
-
+ 
 **Statut de l'action :** `{valid}` | **Résultat :** `{outcome}`
-
+ 
 **Résumé :** *{ruling_summary}*
-
+ 
 ---
-
+ 
 #### 📊 ANALYSE TECHNIQUE (SCRATCHPAD)
 {scratchpad}
-
+ 
 ---
-
+ 
 #### ⚔️ TESTS DE STATISTIQUES & IMPACTS
 * **Modifications de ressources :**
   * Vitalité perdue : `-{vit_lost} PV`
@@ -1056,7 +1072,7 @@ def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -
   * Réserve magique consommée : `-{res_spent}`
 * **Confrontations de Statistiques :**
 {stat_checks_str}
-
+ 
 **Citation de Règle :** *{rule_citation}*
 **Notes de l'Arbitre :** *{notes}*"""
 
@@ -1078,13 +1094,13 @@ def run_grand_arbiter(player_input: str, player_character_ledger: dict = None) -
         }
 
 
-def run_scenario_architect(master_prompt: str) -> dict:
+async def run_scenario_architect(master_prompt: str) -> dict:
     """
     Generates a Fallen universe scenario module: Quête, Événement, Murmure, or Donjon.
     Fast-path agent — receives raw GM request without full pipeline context.
     """
     try:
-        raw_res = call_llm(
+        raw_res = await call_llm(
             SCENARIO_ARCHITECT_PROMPT,
             master_prompt,
             json_mode=False,

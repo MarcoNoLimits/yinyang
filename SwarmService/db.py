@@ -1,20 +1,89 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
+from psycopg2.pool import ThreadedConnectionPool
 import logging
 from config import DATABASE_URL
 
 logger = logging.getLogger("db")
 
+db_pool = None
+try:
+    db_pool = ThreadedConnectionPool(minconn=2, maxconn=15, dsn=DATABASE_URL, connect_timeout=3)
+except Exception as e:
+    logger.error(f"Failed to initialize ThreadedConnectionPool: {e}. Fallback to direct connections.")
+
+class PooledConnectionWrapper:
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+    def cursor(self, *args, **kwargs):
+        return self._conn.cursor(*args, **kwargs)
+    def commit(self):
+        return self._conn.commit()
+    def rollback(self):
+        return self._conn.rollback()
+    def close(self):
+        try:
+            # Ensure transaction is clean (no uncommitted/failed transaction) before returning/closing
+            if self._conn and not getattr(self._conn, "closed", True):
+                self._conn.rollback()
+        except Exception:
+            pass
+        if self._pool:
+            try:
+                self._pool.putconn(self._conn)
+            except Exception as e:
+                logger.error(f"Error returning connection to pool: {e}")
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+        else:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+import time
+
+_db_online = True
+_db_last_checked = 0.0
+_DB_CHECK_COOLDOWN = 15.0  # seconds
+
 def get_db_connection():
-    """Returns a connection to the PostgreSQL database.
+    """Returns a connection to the PostgreSQL database, using pool if available."""
+    global db_pool, _db_online, _db_last_checked
     
-    connect_timeout=3 ensures fast failure when no local DB is available
-    (e.g., during testing without Supabase). Without this, each failed
-    attempt blocks for the OS default (~4s), making the full swarm pipeline
-    take 90+ seconds per request.
-    """
-    conn = psycopg2.connect(DATABASE_URL, connect_timeout=3)
-    return conn
+    current_time = time.time()
+    if not _db_online and (current_time - _db_last_checked < _DB_CHECK_COOLDOWN):
+        raise psycopg2.OperationalError("Database is offline (circuit breaker active).")
+        
+    if db_pool:
+        try:
+            conn = db_pool.getconn()
+            if conn.closed != 0:
+                try:
+                    db_pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = db_pool.getconn()
+            _db_online = True
+            return PooledConnectionWrapper(conn, db_pool)
+        except Exception as e:
+            logger.error(f"Error getting connection from pool: {e}. Retrying with direct connection...")
+            
+    try:
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=2)
+        _db_online = True
+        return PooledConnectionWrapper(conn, None)
+    except Exception as e:
+        _db_online = False
+        _db_last_checked = current_time
+        raise e
+
+
 
 def retrieve_lore_entries(universe_id: str, keywords: list, embedding_vector: list = None, limit: int = 5):
     """
@@ -32,7 +101,7 @@ def retrieve_lore_entries(universe_id: str, keywords: list, embedding_vector: li
                         WITH keyword_matches AS (
                             SELECT title, content, keywords, embedding, 0 AS match_priority
                             FROM yinyang.lorebook_entries
-                            WHERE universe_id = %s AND keywords && %s
+                            WHERE universe_id = %s AND keywords::text[] && %s
                         ),
                         vector_matches AS (
                             SELECT title, content, keywords, embedding, 1 AS match_priority
@@ -44,7 +113,7 @@ def retrieve_lore_entries(universe_id: str, keywords: list, embedding_vector: li
                             SELECT * FROM keyword_matches
                             UNION ALL
                             SELECT * FROM vector_matches
-                            WHERE NOT (keywords && %s)
+                            WHERE NOT (keywords::text[] && %s)
                         ) combined
                         ORDER BY match_priority ASC, (embedding <=> %s::vector) ASC
                         LIMIT %s;
@@ -55,7 +124,7 @@ def retrieve_lore_entries(universe_id: str, keywords: list, embedding_vector: li
                     query = """
                         SELECT title, content, keywords 
                         FROM yinyang.lorebook_entries
-                        WHERE universe_id = %s AND keywords && %s
+                        WHERE universe_id = %s AND keywords::text[] && %s
                         LIMIT %s;
                     """
                     cur.execute(query, (universe_id, keywords, limit))
@@ -263,9 +332,9 @@ def sync_ledger_transaction(universe_id: str, session_id: str, summary: str, del
         conn.autocommit = False
         try:
             with conn.cursor() as cur:
-                # 1. Acquire transaction-level advisory lock on the universe
+                # 1. Acquire transaction-level advisory lock on the session
                 from lock_manager import acquire_advisory_xact_lock
-                lock_key_str = f"yinyang:universe:{universe_id}:lock"
+                lock_key_str = f"yinyang:session:{session_id}:lock"
                 acquire_advisory_xact_lock(cur, lock_key_str)
                 
                 # 2. Ensure session exists and fetch current state
@@ -511,47 +580,30 @@ def upsert_combat_state(
 
 
 def get_revealed_techniques(session_id: str, techniques_list: list[str] = None) -> list:
-    """Scans session chat history for technique names that appear in assistant messages.
-
-    For each technique name in techniques_list, checks if it appears (case-insensitive)
-    in any assistant message content for the given session. Returns the list of
-    technique names that have been mentioned (i.e., revealed in narrative).
-
-    Args:
-        session_id: The session to scan.
-        techniques_list: List of technique name strings to search for.
-                         If None or empty, returns an empty list.
-
-    Returns:
-        A list of technique names found in assistant messages.
-    """
+    """Scans session chat history for technique names that appear in assistant messages using Postgres ILIKE matching."""
     if not techniques_list:
         return []
 
     try:
         conn = get_db_connection()
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Fetch all assistant messages for this session
+            with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT content
-                    FROM yinyang.session_chat_history
-                    WHERE session_id = %s AND role = 'assistant';
+                    SELECT DISTINCT tech
+                    FROM unnest(%s::text[]) AS tech
+                    WHERE EXISTS (
+                        SELECT 1 
+                        FROM yinyang.session_chat_history
+                        WHERE session_id = %s 
+                          AND role = 'assistant' 
+                          AND content ILIKE '%%' || tech || '%%'
+                    );
                     """,
-                    (session_id,)
+                    (techniques_list, session_id)
                 )
                 rows = cur.fetchall()
-
-            # Concatenate all assistant content for a single search pass
-            all_content = " ".join(row["content"] for row in rows).lower()
-
-            revealed = []
-            for technique in techniques_list:
-                if technique.lower() in all_content:
-                    revealed.append(technique)
-
-            return revealed
+                return [row[0] for row in rows]
         finally:
             conn.close()
     except Exception as e:

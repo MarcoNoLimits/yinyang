@@ -1,5 +1,6 @@
 import logging
 import uuid
+import asyncio
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -101,7 +102,7 @@ async def chat_swarm(payload: ChatRequest):
             "state_deltas": {}
         }
         
-        output_state = swarm_engine.invoke(initial_state)
+        output_state = await swarm_engine.ainvoke(initial_state)
         
         ledger = output_state.get("player_character_ledger", {})
         char_state = ledger.get("character", {})
@@ -109,13 +110,13 @@ async def chat_swarm(payload: ChatRequest):
         # Save active route and scratchpad in session state for reloads
         try:
             from db import get_session_state, update_session_state
-            session_data = get_session_state(payload.session_id)
+            session_data = await asyncio.to_thread(get_session_state, payload.session_id)
             current_state = session_data.get("current_state", {}) if session_data else {}
             current_state["active_route"] = output_state.get("active_route", "NARRATIVE_DIRECTOR")
             current_state["_scratchpad"] = output_state.get("scratchpad", "")
             if char_state.get("name"):
                 current_state["char_id"] = payload.char_id or current_state.get("char_id")
-            update_session_state(payload.session_id, payload.universe_id, current_state)
+            await asyncio.to_thread(update_session_state, payload.session_id, payload.universe_id, current_state)
         except Exception as e:
             logger.error(f"Error persisting route/scratchpad in session: {e}")
             
@@ -175,7 +176,7 @@ async def run_swarm(payload: SwarmRequest):
             "state_deltas": {}
         }
         
-        output_state = swarm_engine.invoke(initial_state)
+        output_state = await swarm_engine.ainvoke(initial_state)
         
         return {
             "status": "success",
@@ -196,9 +197,16 @@ async def get_history(session_id: str):
     logger.info(f"Retrieving chat history for session {session_id}")
     try:
         from db import get_chat_history, get_session_state, get_combat_state, get_player_character
-        history = get_chat_history(session_id, limit=50)
         
-        session_data = get_session_state(session_id)
+        # Parallelize independent DB reads
+        db_tasks = [
+            asyncio.to_thread(get_chat_history, session_id, limit=50),
+            asyncio.to_thread(get_session_state, session_id)
+        ]
+        results = await asyncio.gather(*db_tasks)
+        history = results[0]
+        session_data = results[1]
+        
         char_state = {}
         char_id = None
         active_route = "NARRATIVE_DIRECTOR"
@@ -212,8 +220,13 @@ async def get_history(session_id: str):
             scratchpad = current_state.get("_scratchpad", "")
             
             if char_id:
-                combat = get_combat_state(session_id, char_id)
-                char_data = get_player_character(universe_id, char_id)
+                # Parallelize combat and character state retrieval
+                sub_results = await asyncio.gather(
+                    asyncio.to_thread(get_combat_state, session_id, char_id),
+                    asyncio.to_thread(get_player_character, universe_id, char_id)
+                )
+                combat = sub_results[0]
+                char_data = sub_results[1]
                 if char_data:
                     base_vit = 10
                     xp = char_data.get("points", {}).get("XP", 0)
@@ -291,7 +304,7 @@ async def get_history(session_id: str):
                             
                     tech_names = [t.get("name", "") for t in techniques]
                     from db import get_revealed_techniques
-                    revealed_techs = get_revealed_techniques(session_id, tech_names)
+                    revealed_techs = await asyncio.to_thread(get_revealed_techniques, session_id, tech_names)
                     
                     techniques_ledger = []
                     for tech in techniques:

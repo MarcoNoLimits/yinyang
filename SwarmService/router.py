@@ -57,7 +57,7 @@ CRITICAL RULES:
 5. Do not output any Chinese characters or boilerplate text.
 """
 
-def classify_intent(master_prompt: str, player_input: str) -> str:
+async def classify_intent(master_prompt: str, player_input: str) -> str:
     """
     Classifies player intent and returns the target agent route.
     
@@ -72,7 +72,7 @@ def classify_intent(master_prompt: str, player_input: str) -> str:
         import re
         # call_llm signature in agents.py is call_llm(system_prompt, user_content, json_mode)
         # Note: We will rewrite agents.py to accept optional kwargs temp/max_tokens as well.
-        raw = call_llm(ROUTER_SYSTEM_PROMPT, user_payload, json_mode=True, temperature=0.1, max_tokens=256)
+        raw = await call_llm(ROUTER_SYSTEM_PROMPT, user_payload, json_mode=True, temperature=0.1, max_tokens=256)
         result = json.loads(raw)
         route = result.get("route", "NARRATIVE_DIRECTOR").upper()
         reasoning = result.get("reasoning", "")
