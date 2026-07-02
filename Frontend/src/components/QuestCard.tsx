@@ -13,7 +13,12 @@ interface QuestRewards {
   xp?: number;
   pe?: number;
   fortune?: number;
-  items?: { name: string; effect?: string }[];
+  po_jo?: string;
+  pr?: number;
+  pn?: number;
+  items?: (string | { name: string; effect?: string })[];
+  special_gain?: string;
+  appreciation?: string;
   faction_impact?: Record<string, string>;
 }
 
@@ -198,46 +203,7 @@ const QueteCard: React.FC<{ prose: string; meta: QuestMeta }> = ({ prose, meta }
       )}
 
       {/* Rewards */}
-      {meta.rewards && (
-        <Section title="Récompenses" icon="💰" accent="#a78bfa">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-            {meta.rewards.xp && (
-              <span style={rewardChip('#a78bfa')}>{meta.rewards.xp.toLocaleString()} XP</span>
-            )}
-            {meta.rewards.pe && (
-              <span style={rewardChip('#60a5fa')}>{meta.rewards.pe} PE</span>
-            )}
-            {meta.rewards.fortune && (
-              <span style={rewardChip('#c9a84c')}>{meta.rewards.fortune.toLocaleString()} ₲</span>
-            )}
-          </div>
-          {meta.rewards.items && meta.rewards.items.length > 0 && (
-            <div style={{ marginBottom: '6px' }}>
-              {meta.rewards.items.map((item, i) => (
-                <div key={i} style={{ fontSize: '11px', color: '#d4d0c8', marginBottom: '2px' }}>
-                  <span style={{ color: '#fbbf24' }}>🏺 {item.name}</span>
-                  {item.effect && <span style={{ color: '#9ca3af' }}> — {item.effect}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-          {meta.rewards.faction_impact && Object.keys(meta.rewards.faction_impact).length > 0 && (
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {Object.entries(meta.rewards.faction_impact).map(([faction, delta]) => (
-                <span key={faction} style={{
-                  fontSize: '10px', fontWeight: 'bold',
-                  color: delta.startsWith('+') ? '#86efac' : '#fca5a5',
-                  background: delta.startsWith('+') ? '#14532d30' : '#7f1d1d30',
-                  border: `1px solid ${delta.startsWith('+') ? '#16a34a40' : '#dc262640'}`,
-                  borderRadius: '3px', padding: '1px 6px'
-                }}>
-                  {faction} {delta}
-                </span>
-              ))}
-            </div>
-          )}
-        </Section>
-      )}
+      <RenderRewards rewards={meta.rewards} />
     </>
   );
 };
@@ -247,6 +213,101 @@ const rewardChip = (color: string): React.CSSProperties => ({
   background: `${color}15`, border: `1px solid ${color}40`,
   borderRadius: '4px', padding: '2px 10px'
 });
+
+const RenderRewards: React.FC<{ rewards?: QuestRewards; accent?: string }> = ({ rewards, accent = '#a78bfa' }) => {
+  if (!rewards) return null;
+
+  return (
+    <Section title="Récompenses" icon="💰" accent={accent}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+        {rewards.pe !== undefined && (
+          <span style={rewardChip('#60a5fa')}>+{rewards.pe} PE</span>
+        )}
+        {rewards.xp !== undefined && (
+          <span style={rewardChip('#a78bfa')}>+{rewards.xp} XP</span>
+        )}
+        {rewards.pr !== undefined && (
+          <span style={rewardChip('#34d399')}>+{rewards.pr} PR</span>
+        )}
+        {rewards.pn !== undefined && (
+          <span style={rewardChip('#f472b6')}>+{rewards.pn} PN</span>
+        )}
+        {rewards.fortune !== undefined && (
+          <span style={rewardChip('#c9a84c')}>+{rewards.fortune.toLocaleString()} ₲</span>
+        )}
+      </div>
+
+      {(rewards.po_jo || (rewards.items && rewards.items.length > 0) || rewards.special_gain) && (
+        <div style={{
+          background: '#0d0b1e',
+          border: '1px solid #2a2440',
+          borderRadius: '4px',
+          padding: '10px 12px',
+          marginBottom: '10px'
+        }}>
+          {rewards.items && rewards.items.map((item, i) => {
+            const displayName = typeof item === 'string' ? item : item.name + (item.effect ? ` — ${item.effect}` : '');
+            return (
+              <div key={i} style={{ fontSize: '12px', color: '#d4d0c8', marginBottom: '4px' }}>
+                <span style={{ color: '#fbbf24' }}>+ {displayName}</span>
+              </div>
+            );
+          })}
+          {rewards.po_jo && (
+            <div style={{ fontSize: '12px', color: '#e8e4d6', fontWeight: 'bold', marginBottom: '4px' }}>
+              <span style={{ color: '#c9a84c' }}>+ {rewards.po_jo}</span>
+            </div>
+          )}
+          {rewards.special_gain && (
+            <div style={{
+              fontSize: '12px',
+              color: '#a78bfa',
+              fontWeight: 'bold',
+              marginTop: '6px',
+              paddingTop: '6px',
+              borderTop: '1px solid #2a2440'
+            }}>
+              🎁 Gain spécial : {rewards.special_gain}
+            </div>
+          )}
+        </div>
+      )}
+
+      {rewards.appreciation && (
+        <div style={{
+          fontSize: '12px',
+          color: '#9ca3af',
+          fontStyle: 'italic',
+          background: '#12102a',
+          padding: '8px 12px',
+          borderRadius: '4px',
+          borderLeft: '3px solid #6b7280',
+          marginBottom: '10px'
+        }}>
+          💬 Appréciation : "{rewards.appreciation}"
+        </div>
+      )}
+
+      {rewards.faction_impact && Object.keys(rewards.faction_impact).length > 0 && (
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {Object.entries(rewards.faction_impact).map(([faction, delta]) => (
+            <span key={faction} style={{
+              fontSize: '10px',
+              fontWeight: 'bold',
+              color: delta.startsWith('+') ? '#86efac' : '#fca5a5',
+              background: delta.startsWith('+') ? '#14532d30' : '#7f1d1d30',
+              border: `1px solid ${delta.startsWith('+') ? '#16a34a40' : '#dc262640'}`,
+              borderRadius: '3px',
+              padding: '1px 6px'
+            }}>
+              {faction} {delta}
+            </span>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+};
 
 // ─── ÉVÉNEMENT Card ───────────────────────────────────────────────────────────
 
@@ -412,13 +473,8 @@ const DonjonCard: React.FC<{ prose: string; meta: QuestMeta }> = ({ prose, meta 
           <span style={{ color: '#c9a84c' }}>{gmOpen ? '▲' : '▼'}</span>
         </div>
         {gmOpen && meta.completion_rewards && (
-          <div style={{ background: '#0d0b1e', border: '1px solid #c9a84c30', borderRadius: '0 0 4px 4px', padding: '12px' }}>
-            <div style={{ fontSize: '11px', color: '#c9a84c', marginBottom: '6px', fontWeight: 'bold' }}>Récompenses de complétion</div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {meta.completion_rewards.xp && <span style={rewardChip('#a78bfa')}>{meta.completion_rewards.xp.toLocaleString()} XP</span>}
-              {meta.completion_rewards.pe && <span style={rewardChip('#60a5fa')}>{meta.completion_rewards.pe} PE</span>}
-              {meta.completion_rewards.fortune && <span style={rewardChip('#c9a84c')}>{meta.completion_rewards.fortune.toLocaleString()} ₲</span>}
-            </div>
+          <div style={{ borderTop: '1px solid #2a2440', paddingTop: '10px', marginTop: '10px' }}>
+            <RenderRewards rewards={meta.completion_rewards} />
           </div>
         )}
       </Section>
