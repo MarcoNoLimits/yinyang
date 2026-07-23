@@ -181,6 +181,45 @@ SCENARIOS = [
             "présumé", "oeil de minuit",
         ],
     },
+    # ------------------------------------------------------------------
+    # Scenario 7: Combat transition & status effects arbitration
+    # ------------------------------------------------------------------
+    {
+        "session_id": "a0000000-0000-0000-0000-000000000007",
+        "description": "Combat transition and status effects arbitration",
+        "payload": {
+            "universe_id": UNIVERSE_ID,
+            "session_id": "a0000000-0000-0000-0000-000000000007",
+            "player_input": (
+                "Je brandis mon épée et j'attaque de front avec Flamberge Céleste. "
+                "Je dépense 10 Endurance et 5 Réserve."
+            ),
+            "char_id": None,
+            "char_name": "Vladislaus Nocturnus",
+            "char_personality": None,
+            "timeline_context": "Vladislaus Nocturnus s'avance avec hostilité.",
+        },
+        "continuity_check": False,
+    },
+    # ------------------------------------------------------------------
+    # Scenario 8: Narrative choices selection
+    # ------------------------------------------------------------------
+    {
+        "session_id": "a0000000-0000-0000-0000-000000000008",
+        "description": "Narrative choices selection and director prose generation",
+        "payload": {
+            "universe_id": UNIVERSE_ID,
+            "session_id": "a0000000-0000-0000-0000-000000000008",
+            "player_input": (
+                "Je choisis de prêter serment d'allégeance à la Rose Noire devant leur autel sacré."
+            ),
+            "char_id": None,
+            "char_name": None,
+            "char_personality": None,
+            "timeline_context": "Devant l'autel de la Rose Noire.",
+        },
+        "continuity_check": False,
+    },
 ]
 
 # ---------------------------------------------------------------------------

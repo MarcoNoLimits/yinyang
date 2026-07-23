@@ -136,7 +136,8 @@ async def chat_swarm(payload: ChatRequest):
             "active_route": output_state.get("active_route", "NARRATIVE_DIRECTOR"),
             "scratchpad": output_state.get("scratchpad", ""),
             "agent_metadata": output_state.get("agent_metadata", {}),
-            "character_state": char_state
+            "character_state": char_state,
+            "encounter_pnj": output_state.get("encounter_pnj")
         }
     except Exception as e:
         logger.error(f"Error executing chat graph: {e}", exc_info=True)

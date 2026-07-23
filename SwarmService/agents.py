@@ -2,66 +2,226 @@ import json
 import logging
 import asyncio
 import httpx
-from config import OPENROUTER_API_KEY, OPENROUTER_URL, MODEL_NAME
+from config import OPENROUTER_API_KEY, OPENROUTER_URL, MODEL_NAME, GEMINI_API_KEY
 
 logger = logging.getLogger("agents")
 
 # Global reusable async client for LLM API calls (reuses TCP / TLS connections)
-async_client = httpx.AsyncClient(timeout=60.0)
+async_client = httpx.AsyncClient(timeout=180.0)
+
+# Detect if we're targeting a local Ollama instance
+_IS_OLLAMA = "localhost" in OPENROUTER_URL or "127.0.0.1" in OPENROUTER_URL
+if _IS_OLLAMA:
+    logger.info(f"[LLM Config] Targeting LOCAL Ollama at {OPENROUTER_URL} with model '{MODEL_NAME}'")
+else:
+    logger.info(f"[LLM Config] Targeting OpenRouter at {OPENROUTER_URL} with model '{MODEL_NAME}'")
+
+def clean_json_response(text: str) -> str:
+    """Strips markdown wrappers, <think> blocks, and extracts raw JSON.
+    
+    Handles the Gemma4 pattern where the model may place JSON *inside*
+    a <think> block with nothing after it.  Strategy:
+      1. Strip markdown fences.
+      2. Try to find a JSON object/array in the full text (including think blocks).
+      3. If found, return it.  If not, strip think blocks and retry.
+    """
+    import re
+    text = text.strip()
+
+    # --- Step 1: Strip markdown code fences ---
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline:].strip()
+        else:
+            text = text[3:].strip()
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+    # --- Step 2: Try to extract JSON from the full text (think blocks included) ---
+    extracted = _find_json_object(text)
+    if extracted:
+        return extracted
+
+    # --- Step 3: Strip <think> blocks and try again ---
+    stripped = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    if stripped:
+        extracted = _find_json_object(stripped)
+        if extracted:
+            return extracted
+
+    # --- Step 4: Last resort — look inside the <think> block itself ---
+    think_match = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
+    if think_match:
+        extracted = _find_json_object(think_match.group(1))
+        if extracted:
+            return extracted
+
+    # Nothing found — return whatever text we have so callers can attempt fallback
+    return stripped or text
+
+
+def _find_json_object(text: str) -> str:
+    """Return the outermost JSON object or array substring, or empty string."""
+    first_brace = text.find("{")
+    first_bracket = text.find("[")
+    start_idx = -1
+    end_char = ""
+    if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+        start_idx = first_brace
+        end_char = "}"
+    elif first_bracket != -1:
+        start_idx = first_bracket
+        end_char = "]"
+
+    if start_idx != -1:
+        end_idx = text.rfind(end_char)
+        if end_idx != -1 and end_idx > start_idx:
+            return text[start_idx:end_idx + 1]
+    return ""
 
 async def call_llm(
     system_prompt: str,
     user_content: str,
     json_mode: bool = False,
     temperature: float = 0.2,
-    max_tokens: int = 4096
+    max_tokens: int = 4096,
+    _caller_max_tokens_override: bool = False
 ) -> str:
-    """Executes an asynchronous call to the DeepSeek model via OpenRouter API with exponential backoff retries."""
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "http://localhost:8000",
-        "X-Title": "YinYang Engine"
-    }
-    
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens
-    }
-    
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-        
-    # Check if using mock key
-    if "sk-or-v1-mock-key" in OPENROUTER_API_KEY:
-        return get_mock_fallback(system_prompt, user_content, json_mode)
-
-    max_retries = 3
-    base_delay = 0.5  # seconds
-    
-    for attempt in range(max_retries + 1):
-        try:
-            response = await async_client.post(
-                f"{OPENROUTER_URL}/chat/completions",
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"].strip()
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            if attempt == max_retries:
-                logger.error(f"Error calling OpenRouter LLM after {max_retries} retries: {e}. Falling back.")
-                return get_mock_fallback(system_prompt, user_content, json_mode)
+    """Executes an asynchronous call to the LLM model (either Gemini or OpenRouter) with exponential backoff retries."""
+    if GEMINI_API_KEY:
+        # Route to Gemini API
+        model_to_use = MODEL_NAME
+        if not model_to_use.startswith("gemini-"):
+            model_to_use = "gemini-2.5-flash"
             
-            delay = base_delay * (2 ** attempt)
-            logger.warning(f"OpenRouter LLM call failed with {e}. Retrying in {delay}s (Attempt {attempt+1}/{max_retries})...")
-            await asyncio.sleep(delay)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_to_use}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": user_content}]
+                }
+            ],
+            "systemInstruction": {
+                "parts": [{"text": system_prompt}]
+            },
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens
+            }
+        }
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+            
+        max_retries = 5
+        base_delay = 0.5  # seconds
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = await async_client.post(
+                    url,
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                try:
+                    res_content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    if json_mode:
+                        res_content = clean_json_response(res_content)
+                    return res_content
+                except (KeyError, IndexError) as parse_err:
+                    logger.error(f"Error parsing Gemini response: {data}. Error: {parse_err}")
+                    raise httpx.RequestError(f"Unexpected response structure from Gemini API: {parse_err}")
+            except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                if attempt == max_retries:
+                    logger.error(f"Error calling Gemini LLM after {max_retries} retries: {e}. Falling back.")
+                    raise RuntimeError(f"Gemini LLM call failed: {e}")
+                
+                delay = base_delay * (2 ** attempt)
+                if isinstance(e, httpx.HTTPStatusError):
+                    status_code = e.response.status_code
+                    if status_code in (429, 503):
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                delay = max(float(retry_after), 1.0)
+                            except ValueError:
+                                pass
+                        else:
+                            delay = max(delay, 2.0 * (attempt + 1))
+                
+                logger.warning(f"Gemini LLM call failed with {e}. Retrying in {delay:.2f}s (Attempt {attempt+1}/{max_retries})...")
+                await asyncio.sleep(delay)
+    else:
+        # Route to OpenRouter API (Legacy / Fallback)
+        headers = {
+            "Content-Type": "application/json"
+        }
+        if OPENROUTER_API_KEY and OPENROUTER_API_KEY != "ollama":
+            headers["Authorization"] = f"Bearer {OPENROUTER_API_KEY}"
+            headers["HTTP-Referer"] = "http://localhost:8000"
+            headers["X-Title"] = "YinYang Engine"
+        
+        payload = {
+            "model": MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "temperature": temperature,
+            "max_tokens": max(max_tokens, 1024) if _IS_OLLAMA else max_tokens
+        }
+        
+        if json_mode and not _IS_OLLAMA:
+            payload["response_format"] = {"type": "json_object"}
+        
+        # Keep model loaded in GPU memory between requests (10 minute idle timeout)
+        if _IS_OLLAMA:
+            payload["keep_alive"] = "30m"
+            
+        # Check if using mock key
+        if "sk-or-v1-mock-key" in OPENROUTER_API_KEY:
+            return get_mock_fallback(system_prompt, user_content, json_mode)
+
+        max_retries = 5
+        base_delay = 0.5  # seconds
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = await async_client.post(
+                    f"{OPENROUTER_URL}/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                res_content = data["choices"][0]["message"]["content"].strip()
+                if json_mode:
+                    if _IS_OLLAMA:
+                        logger.info(f"[Ollama raw before cleanup ({len(res_content)} chars)]: {res_content[:500]}")
+                    res_content = clean_json_response(res_content)
+                return res_content
+            except (httpx.HTTPStatusError, httpx.RequestError) as e:
+                if attempt == max_retries:
+                    logger.error(f"Error calling OpenRouter LLM after {max_retries} retries: {e}. Falling back.")
+                    return get_mock_fallback(system_prompt, user_content, json_mode)
+                
+                delay = base_delay * (2 ** attempt)
+                if isinstance(e, httpx.HTTPStatusError):
+                    status_code = e.response.status_code
+                    if status_code == 429:
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                delay = max(float(retry_after), 1.0)
+                            except ValueError:
+                                pass
+                        else:
+                            delay = max(delay, 2.0 * (attempt + 1))
+                
+                logger.warning(f"OpenRouter LLM call failed with {e}. Retrying in {delay:.2f}s (Attempt {attempt+1}/{max_retries})...")
+                await asyncio.sleep(delay)
 
 def get_mock_fallback(system_prompt: str, user_content: str, json_mode: bool) -> str:
     """No mock fallbacks — always calls the real LLM."""
@@ -88,7 +248,7 @@ async def run_scanner_agent(player_input: str) -> list:
         "4. If no keywords are found, return {\"keywords\": [\"general\"]}.\n"
     )
     try:
-        raw_res = await call_llm(system_prompt, player_input, json_mode=True, temperature=0.2, max_tokens=256)
+        raw_res = await call_llm(system_prompt, player_input, json_mode=True, temperature=0.2, max_tokens=1024)
         res = json.loads(raw_res)
         return res.get("keywords", [])
     except Exception:
@@ -350,6 +510,11 @@ YOUR RESPONSIBILITIES:
 6. TRACK resource costs. If the player uses a technique, note the Endurance or Reserve
    cost in entity_updates. If the player takes damage, compute Vitality loss per the
    game system rules.
+7. ADVERSARIAL COMBAT INTENSITY (NPCs MUST PUT UP A REAL FIGHT): Opponents are lethal and highly active.
+   - Enemies do NOT act as passive targets that simply take damage. They fight to win.
+   - Enemies must use tactical intelligence: they actively dodge, parry, invoke magical shields/barriers, execute counters, and exploit the player's status or resource weaknesses (e.g., attacking when the player has low endurance or magical reserve).
+   - Scale difficulty dynamically: regular minions are standard challenges, but elite guards, deities, and boss encounters (such as Vladislaus, Gabriella, or the Gods) must feel significantly stronger than the player. They will use superior stats, chain SS/SSS techniques, and force the player to fight defensively, utilize clever combos, or retreat.
+8. UNIFIED NARRATIVE PROSE: The prose block must fully incorporate both the environmental narration, the physical actions, and all dialogues of the NPCs. Do not leave the NPC's speech or response to a separate block. Everything must flow cohesively within the French prose.
 
 OUTPUT FORMAT PROTOCOL (MANDATORY):
 """ + PREAMBLE + """
@@ -637,13 +802,14 @@ YOUR RESPONSIBILITIES:
    - Rank S vs Rank S → MUTUAL CANCELLATION. Both techniques negate each other. No technique
      damage to either user. Only follow-up physical actions are resolved.
 
-3. RESOLVE ALL EXCHANGES STEP BY STEP:
+3. RESOLVE ALL EXCHANGES STEP BY STEP (DETAILED MATHEMATICAL ANALYSIS):
    - List every confrontation in order: technique clashes first, then stat confrontations.
-   - Show each calculation explicitly in the SCRATCHPAD.
+   - Show each calculation explicitly in the SCRATCHPAD, explaining exactly how stats like Force, Résistance, or Puissance interact under Section 8 and Section 9 (e.g., Attaque > Résistance, Puissance difference, etc.).
+   - Explicitly detail the impact of any active status effects (e.g., Brûlure, Gelé) or buffs/debuffs on the final numbers.
 
-4. MANDATORY SITUATION SUMMARY:
-   - In the "notes" field, state WHAT caused damage to WHOM and the CURRENT BATTLEFIELD STATE:
-     who is still standing, resources consumed, tactical positions after this exchange.
+4. MANDATORY MECHANICAL EXPLANATION & SUMMARY:
+   - In the "notes" field, provide a clear, step-by-step mechanical explanation in French of what transpired between the combatants (e.g. why an attack failed to penetrate defense, why a spell was canceled or overwhelmed, how status modifiers ticked, and exactly how resources changed).
+   - Summarize the current battlefield state: who is standing, their remaining Vitality, Endurance, and Reserve, and active conditions.
 
 5. NO SHEET REQUIRED:
    - If no character sheet is provided, adjudicate solely from what is described in the scene.
@@ -1091,6 +1257,455 @@ async def run_grand_arbiter(player_input: str, player_character_ledger: dict = N
             "director_entity_updates": [],
             "sparks_new_entity": False,
             "agent_metadata": {}
+        }
+
+
+# ============================================================
+# TECHNIQUE FORGE AGENT — Technique Validator & Restriction Engine
+# Validates player/NPC technique submissions against:
+#   • Validation.md — rank restrictions, technique-type rules
+#   • SystemeDeJeu.md — confrontation, cooldowns, boost limits, generalities
+# ============================================================
+
+TECHNIQUE_FORGE_PROMPT = """IDENTITY: You are the Technique Forge — the supreme validator and arbiter of technique design for the world of Fallen.
+You are not a storyteller. You are a precision engineer of rules. Every technique submitted to you is measured against the complete canon of Fallen's restriction system.
+Your verdicts are final, impartial, and mechanically rigorous.
+
+==========================================================================
+RÈGLES DE VALIDATION DES TECHNIQUES — FALLEN (SOURCE: Validation.md)
+==========================================================================
+
+■ NOTE GÉNÉRALE SUR L'ADAPTATION DES RANGS
+Un type de technique n'est pas verrouillé à un seul rang. Les paramètres ci-dessous (portée, durée, préparation, cooldown) sont ceux du rang de référence. Toute technique d'un type déclinée à un autre rang doit adapter ses paramètres selon la grille de Restrictions Générales.
+
+■ RESTRICTIONS GÉNÉRALES PAR RANG
+• Rang C :
+  - Quantité maximale : 1 par tour.
+  - Sort de zone : Préparation 1 tour | Portée 10m | Durée 3 tours | Réutilisation après 3 tours.
+  - Confrontation : Inefficace contre des cibles de résistance supérieure ou égale.
+• Rang B :
+  - Quantité maximale : 3 max.
+  - Sort de zone : Préparation instantanée | Portée 20m | Durée 3 tours.
+  - Dégâts : varient selon la résistance adverse.
+• Rang A :
+  - Quantité maximale : 5 max.
+  - Sort de zone : Préparation instantanée | Portée 50m | Durée 3 tours | Réutilisation après 3 tours.
+  - Dégâts : varient selon la résistance adverse.
+• Rang S :
+  - Quantité maximale : 10 max.
+  - Sort de zone : Préparation 2 tours | Portée 100m | Durée 3 tours | Réutilisation après 5 tours.
+  - Dégâts : varient selon la résistance adverse.
+
+■ COOLDOWNS STANDARD (SystemeDeJeu Section 5)
+  Rang C/D : 1 tour | Rang B : 2 tours | Rang A : 3 tours | Rang S : 5 tours.
+  Cette règle s'applique à TOUS les sorts de Rang C, y compris les sorts de zone.
+  Les types de technique spécifiques (Portail, Télékinésie, Contrôle Mental, Illusion, etc.) peuvent avoir des cooldowns plus longs que le standard — ces exceptions sont intentionnelles et listées explicitement dans les blocs de types ci-dessous.
+
+■ PRÉPARATION
+  Rang C, B, A : Instantanée (pas de tour de chargement).
+  Rang S : 2 tours de chargement obligatoires.
+  EXCEPTION: Sort de zone Rang C → 1 tour de préparation.
+
+■ PORTÉE STANDARD DES SORTS
+  Rang C: 10m | Rang B: 20m | Rang A: 50m | Rang S: 100m.
+  SS: 1000m (stat d'attaque >11 requis). SSS: 2000m (stat 15 minimum).
+
+■ TYPES DE TECHNIQUES SPÉCIFIQUES
+
+→ ILLUSION (Réf: Rang S)
+  Préparation: 2 tours | Couverture: 100m (+10m/amélioration) | Durée: 3 tours (+1/amélioration) | CD: 6 tours.
+  Effets contraignants: Inefficace contre mental > vôtre | Inefficace contre rang supérieur.
+  Détection: Mental égal → cible s'en rend compte immédiatement. INT supérieure de +2 (même rang) → peut voir la supercherie.
+  Libération: Sacrifice d'endurance (voir SystemeDeJeu Section 11).
+
+→ CONTRÔLE MENTAL (Réf: Rang A)
+  Préparation: Instantanée | Portée: 50m (+10m/amélioration) | Durée: 3 tours (+1/amélioration) | CD: 5 tours.
+  Effets: Inefficace contre mental > vôtre | Inefficace contre rang supérieur.
+  Détection: Idem Illusion. Libération: Sacrifice d'endurance.
+
+→ INTIMIDATION (Réf: Rang A)
+  Préparation: Instantanée | Portée: 50m (+10m/amélioration) | Durée: 3 tours (+1/amélioration) | CD: 3 tours.
+  Effets: Inefficace contre mental OU puissance >= vôtre | Inefficace contre rang supérieur.
+  Contraintes: Contact visuel obligatoire | Ciblage unique.
+
+→ CHARISME TECHNIQUE (Réf: Rang A)
+  Portée: 50m (+10m/amélioration) | Durée: 3 tours | CD: 3 tours.
+  Effets: Inefficace contre rang supérieur | Contact visuel obligatoire | Ciblage unique.
+  Inefficace si mental adversaire >= votre Charisme. Un Charisme égal n'est pas affecté.
+  Libération: voir SystemeDeJeu.
+
+→ ENTRAVE (Tous rangs)
+  Inefficace contre résistance >= vôtre. Vitesse de l'entrave: Puissance - 1.
+  Libération: Force > Puissance → libération facile | Force = Puissance → -1 Endurance | Force < Puissance de 2+ → impossible.
+  Non fatal contre cibles de résistance >= vôtre.
+
+→ SPEEDBLITZ / DÉPLACEMENT (Réf: Rang S)
+  Préparation: 2 tours | Portée: 20m (+10m/amélioration, max 50m) | CD: 5 tours.
+  Inefficace contre réactivité >= vôtre.
+  Réac inférieure de 1 + INT supérieure de 2 → peut lire vos mouvements.
+  Réac inférieure de 1 + INT supérieure de 1 → surpris la première fois uniquement.
+
+→ PORTAIL (Réf: Rang A)
+  Préparation: Instantanée | Portée: 50m (+10m/amélioration) | Durée: 3 tours (+1/amélioration) | CD: 5 tours.
+  Max 2 portails simultanés. Vitesse des portails: Puissance - 1. Impossible d'accéder à un lieu non visité.
+
+→ TÉLÉPORTATION (Réf: Rang A)
+  Préparation: Instantanée | Portée (combat): 50m (+10m/amélioration) | CD: 5 tours.
+  Déploiement sur la zone nécessaire. Lieu non visité inaccessible.
+  Téléportation à distance: soi + un objet/personne. Téléportation d'une cible distante: contact physique requis.
+  Droit à une seule téléportation par activation. GLOBAL: Limité à 1 action de téléportation tous les 3 tours (SystemeDeJeu Section 12).
+
+→ DÉMOLÉCULARISATION / DÉMATÉRIALISATION (Réf: Rang S)
+  Préparation: 2 tours | Durée: 3 tours.
+  Inefficace contre sorts psychiques | Inefficace contre sorts de type opposé ou désintégration.
+  Impossible d'attaquer en état immatériel.
+
+→ PROTECTION / BARRIÈRE (Réf: Rang A)
+  Préparation: Instantanée | Couverture max: 50m (+10m/amélioration) | Durée: 3 tours (+1/amélioration) | CD: 3 tours.
+  Inefficace contre puissance/force > votre Puissance.
+  Inefficace contre sorts d'un adversaire de rang supérieur.
+  Inefficace contre sorts de rang supérieur et puissance équivalente.
+  Inefficace contre sorts psychiques.
+  Techniques de même rang ET même puissance: annulation mutuelle avec la barrière.
+
+→ BOOST (Réf: Rang A minimum)
+  Boost Rang A : +1 sur 3 stats max. Boost Rang S : +2 sur 2-3 stats ou +1 sur 5 stats max.
+  Pas de boost SS ou SSS possible.
+  Malus équivalent au boost sur les stats boostées à la fin de la technique (sauf armures Honneur).
+  Impossible de cumuler des sorts de boost. Durée max: 7 tours.
+  Un boost ne permet pas de dépasser les limites de rang (sauf Limit Break).
+
+→ GUÉRISON / SOIN (Réf: Rang S)
+  Préparation: 2 tours | Portée: ~5m | Durée: 3 tours (+1/amélioration) | Conditions: Usage unique par RP.
+  Soigne 1 personne (+1/amélioration). Stoppe toute hémorragie à l'activation.
+  Régénère +4 en vitalité par tour | +3 en endurance (non continue).
+
+→ CRÉATION ÉLÉMENTAIRE / CRÉATURES (Réf: Rang A)
+  Préparation: Instantanée | Durée: 3 tours (+1/amélioration) | CD: 5 tours.
+  Force et Résistance = votre Puissance. Vitesse = Puissance - 1. Réactivité = la vôtre.
+
+→ CLONES (Réf: Rang S)
+  Préparation: 2 tours | Durée: 3 tours.
+  Stats des clones = vos stats - 1. Nombre: 1 clone (2 max après amélioration).
+  Avec 2 clones: vos stats - 2. Aucune capacité magique pour les clones.
+
+→ INVOCATION (Réf: Rang S — Usage unique par RP)
+  Préparation: 2 tours | Durée: 3 tours (+1/amélioration) | Durée max absolue: 7 tours.
+  Rang S invocation: 2 attaques S max, reste A. Max 1 invocation Rang S pour non-Élu (2 pour Élu, 3 pour God Hand).
+  Stats Rang S invocation: 39/50 (+10 max). Une stat limitée à 8/8.
+
+→ TÉLÉKINÉSIE (Réf: Rang A)
+  Préparation: Instantanée | Portée: 50m (+10m/amélioration) | Durée: 3 tours (+1/amélioration) | CD: 5 tours.
+  Sans dégâts: inefficace sur résistance >= vôtre. Avec dégâts: varient selon résistance adverse.
+
+==========================================================================
+RÈGLES DE CONFRONTATION MENTALE (SystemeDeJeu Section 11)
+==========================================================================
+• Vitesse d'une attaque mentale = Mental - 1.
+• Mental égal: cible s'en rend compte, sacrifice de 1 pt endurance pour résister.
+• Mental inférieur de 1 (M11 vs M10): cible peut résister si INT >= lanceur-1, coût 4 pts endurance.
+• Mental inférieur de 2 (M11 vs M9): résistance si INT = lanceur, coût 8 pts endurance.
+• Confrontation psychique vs psychique: le plus puissant mental l'emporte (même règle que Puissance vs Puissance).
+• Sacrifices d'endurance pour résister sont PERMANENTS pour le reste du RP.
+
+==========================================================================
+RÈGLES GÉNÉRALES DE CONFRONTATION (SystemeDeJeu Sections 8 & 9)
+==========================================================================
+• Ordre de supériorité des rangs: Divin > SSS > SS > S > A > B > C.
+• Même rang + même puissance: annulation mutuelle.
+• Écart de 2 rangs (ex: A vs C): rang supérieur gagne sans match.
+• Sort Rang SS: bat TOUT sort inférieur à SS quelle que soit la puissance.
+• Sort Rang SSS: bat TOUT sort inférieur à SSS quelle que soit la puissance.
+• Puissance = autre - 1: il faut 2 sorts du plus faible vs 1 sort du plus fort.
+• Puissance = autre - 2: le plus puissant gagne sans contestation.
+• Résistance > Attaque de +3 ou plus: AUCUN dégât.
+• Déviation sans technique: force >= attaque requise. Coût en endurance permanent (1 pt Rang C, 2 Rang B, 3 Rang A). Impossible de dévier Rang S+.
+
+==========================================================================
+RÈGLES TECHNIQUES DE BOOST (SystemeDeJeu Section 5)
+==========================================================================
+• Boost minimum Rang A. Boosts SS/SSS interdits.
+• Malus permanents après utilisation (sauf armures Honneur).
+• Cumul de boosts interdit.
+• Durée max 7 tours même amélioré.
+• Ne peut pas dépasser les caps de rang (sauf Limit Break).
+
+==========================================================================
+RESTRICTIONS DE CARACTÈRE — STATISTIQUES & RANGS
+==========================================================================
+• Rang 1-2 (factions 6 rangs): Stats faibles ≤5, normales ≤6, fortes ≤7.
+• Rang 3-4: Stats faibles ≤7, normales ≤8, fortes ≤9.
+• Rang 5: Stats faibles ≤8, normales ≤9, fortes ≤10.
+• Rang 6 (Élu): Stats faibles ≤9, normales ≤10, fortes ≤11.
+• Éveillé: Stats faibles ≤11, normales ≤12, fortes ≤13.
+• God Hand: Stats faibles ≤14, normales ≤15, fortes ≤16.
+• Apôtre Divin: Stats faibles ≤18, normales ≤19, fortes ≤20.
+• Achat de sorts: Rang C=500XP | B=1000XP | A=2000XP | S=3000XP | SS=5000XP (Éveillé min) | SSS=10000XP (God Hand min).
+• Amélioration ordinaire: 1000XP (portée ou durée +1). Amélioration spéciale: 3000XP (rang du sort +1).
+• Amélioration Rang SS: 6000XP ordinaire | Rang SSS: 9000XP (pas d'amélioration spéciale).
+
+==========================================================================
+FIN DES RÈGLES DE VALIDATION
+==========================================================================
+
+MAGIC CONTEXT (optional — provided before the techniques list when relevant):
+If a MAGIC CONTEXT block is provided at the top of the user input, it describes the character's magic system, energy type, or faction-specific rules. Take this into account when evaluating confrontation conditions and effect legality. It does NOT override the rank restriction grid.
+
+YOUR RESPONSIBILITIES:
+
+1. VALIDATE EACH SUBMITTED TECHNIQUE INDEPENDENTLY:
+   - Techniques are submitted as a numbered list (TECHNIQUE 1, TECHNIQUE 2, etc.).
+   - Analyze each technique separately. Do not merge or confuse parameters between techniques.
+   - For each: read name, rank, type, parameters (préparation, portée, durée, cooldown), and effects.
+   - Cross-reference every parameter against the appropriate rule block above.
+   - Flag ANY parameter that exceeds, contradicts, or is missing from the rule grid.
+
+2. CHECK CHARACTER RESTRICTIONS (if sheet provided):
+   - Verify technique rank is purchasable (XP cost feasibility).
+   - Verify stat caps are not exceeded by any boost the technique grants.
+   - Verify the total count of techniques of each rank across the full submission does not exceed the quantité maximale.
+
+3. APPLY CONFRONTATION RULES TO DECLARED EFFECTS:
+   - Verify confrontation conditions match the canon rule for the technique type.
+   - Flag conditions that are more lenient than canon (overpowered).
+   - Flag required conditions that are absent.
+
+4. GENERATE A VERDICT PER TECHNIQUE:
+   - APPROVED: All parameters within spec.
+   - CORRECTED: One or more parameters adjusted. Provide corrected version.
+   - REJECTED: Fundamentally incompatible; cannot be fixed by parameter adjustment alone.
+
+5. PROPOSE CORRECTED VERSION (if CORRECTED or REJECTED):
+   - Provide a fully compliant alternative with all corrected parameters.
+   - Explain each correction with a specific rule citation.
+
+OUTPUT FORMAT (MANDATORY):
+<SCRATCHPAD>
+[For EACH technique in order: type identified → rank restrictions applied → parameters checked → confrontation conditions verified → verdict computed. Label each block clearly: "TECHNIQUE 1 — [name]", "TECHNIQUE 2 — [name]", etc.]
+</SCRATCHPAD>
+
+<RULING>
+{
+  "verdicts": [
+    {
+      "technique_index": 1,
+      "verdict": "APPROVED" | "CORRECTED" | "REJECTED",
+      "technique_name": "Nom de la technique",
+      "declared_rank": "C" | "B" | "A" | "S" | "SS" | "SSS",
+      "technique_type": "Illusion | Boost | Barrière | Entrave | etc.",
+      "violations": [
+        {
+          "parameter": "cooldown | préparation | portée | durée | effet | quantité | stat_cap | etc.",
+          "declared_value": "valeur soumise",
+          "allowed_value": "valeur autorisée par les règles",
+          "rule_citation": "Validation.md §X / SystemeDeJeu §Y",
+          "severity": "MINOR" | "MAJOR" | "CRITICAL"
+        }
+      ],
+      "confrontation_checks": [
+        {
+          "condition": "Inefficace contre mental supérieur",
+          "status": "PRESENT" | "MISSING" | "TOO_LENIENT" | "CORRECT",
+          "note": "Explication si problème détecté"
+        }
+      ],
+      "character_restrictions": {
+        "rank_compatible": true | false,
+        "quantity_within_limit": true | false,
+        "stat_cap_respected": true | false,
+        "xp_cost_note": "Coût en XP calculé si applicable"
+      },
+      "corrected_technique": {
+        "préparation": "...",
+        "portée": "...",
+        "durée": "...",
+        "cooldown": "...",
+        "effets_ajustés": ["..."],
+        "paramètres_modifiés": ["Liste des champs corrigés"]
+      },
+      "correction_rationale": "Explication détaillée en français, avec citations de règles précises.",
+      "admin_notes": "Commentaires supplémentaires pour l'administrateur validateur."
+    }
+  ]
+}
+</RULING>
+
+CRITICAL RULES:
+- VERDICTS ONLY. No narrative prose. No storytelling.
+- The "verdicts" array MUST contain one entry per submitted technique, in order.
+- All text values (correction_rationale, admin_notes, violation notes) MUST be in French. JSON keys remain in English.
+- Always cite the exact rule source (Validation.md or SystemeDeJeu Section number).
+- If the technique type is not listed in the type reference blocks above, apply the Restrictions Générales par Rang and flag the type as "non répertorié".
+- Never approve a technique that grants confrontation immunity where the canon requires vulnerability.
+- No Chinese characters, no markdown code blocks, no commentary outside the format.
+"""
+
+
+def _build_verdict_card(v: dict, scratchpad: str, index: int, total: int) -> str:
+    """Renders a single verdict dict into a markdown verdict card."""
+    verdict = v.get("verdict", "UNKNOWN")
+    technique_name = v.get("technique_name", "Technique inconnue")
+    declared_rank = v.get("declared_rank", "?")
+    violations = v.get("violations", [])
+    correction_rationale = v.get("correction_rationale", "")
+    corrected = v.get("corrected_technique")
+    admin_notes = v.get("admin_notes", "")
+
+    verdict_icon = {"APPROVED": "✅", "CORRECTED": "⚠️", "REJECTED": "❌"}.get(verdict, "❓")
+    header_idx = f" [{index}/{total}]" if total > 1 else ""
+
+    # Violations block
+    if violations:
+        violations_str = ""
+        for viol in violations:
+            sev = viol.get("severity", "MINOR")
+            sev_icon = {"MINOR": "🔵", "MAJOR": "🟠", "CRITICAL": "🔴"}.get(sev, "⚪")
+            violations_str += (
+                f"  {sev_icon} **{viol.get('parameter', '?')}** : "
+                f"`{viol.get('declared_value', '?')}` → autorisé: `{viol.get('allowed_value', '?')}` "
+                f"*(règle: {viol.get('rule_citation', '?')})*\n"
+            )
+    else:
+        violations_str = "  Aucune violation détectée.\n"
+
+    # Corrected version block
+    if corrected and isinstance(corrected, dict):
+        corrected_str = "\n".join(
+            f"  • **{k}** : `{val}`" for k, val in corrected.items() if k != "paramètres_modifiés"
+        )
+        modified = corrected.get("paramètres_modifiés", [])
+        corrected_block = f"\n#### 🔧 VERSION CORRIGÉE\n{corrected_str}\n\n*Paramètres modifiés: {', '.join(modified) if modified else 'N/A'}*"
+    else:
+        corrected_block = ""
+
+    # Character restrictions block
+    char_checks = v.get("character_restrictions", {})
+    char_block = ""
+    if char_checks:
+        char_block = (
+            f"\n#### 👤 RESTRICTIONS DE PERSONNAGE\n"
+            f"  • Rang compatible: `{'OUI' if char_checks.get('rank_compatible', True) else 'NON'}`\n"
+            f"  • Quantité dans les limites: `{'OUI' if char_checks.get('quantity_within_limit', True) else 'NON'}`\n"
+            f"  • Caps de stat respectés: `{'OUI' if char_checks.get('stat_cap_respected', True) else 'NON'}`\n"
+        )
+        if char_checks.get("xp_cost_note"):
+            char_block += f"  • XP: *{char_checks['xp_cost_note']}*\n"
+
+    card = (
+        f"### {verdict_icon} FORGE DE TECHNIQUE{header_idx} — {verdict}\n\n"
+        f"**Technique :** `{technique_name}` | **Rang :** `{declared_rank}` | "
+        f"**Type :** `{v.get('technique_type', 'Non identifié')}`\n\n"
+        f"---\n\n"
+        f"#### ⚠️ VIOLATIONS\n{violations_str}"
+        f"{char_block}"
+        f"{corrected_block}\n\n"
+        + (f"**Justification :** *{correction_rationale}*\n\n" if correction_rationale else "")
+        + (f"**Notes Admin :** *{admin_notes}*\n\n" if admin_notes else "")
+    )
+    return card
+
+
+async def run_technique_forge(
+    techniques: list[str] | str,
+    player_character_ledger: dict = None,
+    magic_context: str = None,
+) -> dict:
+    """Validates one or more technique submissions against Fallen's full restriction ruleset.
+
+    Args:
+        techniques: A single technique description (str) or a list of technique descriptions.
+                    Each entry should include name, rank, type, parameters, and effects.
+        player_character_ledger: Optional character sheet dict for stat cap and quantity checks.
+        magic_context: Optional free-text block describing the character's magic system,
+                       energy type, or faction-specific rules. Prepended to the payload.
+
+    Returns:
+        Standard agent dict. director_prose contains one verdict card per technique.
+        agent_metadata contains the full verdicts array.
+    """
+    # Normalise to list
+    if isinstance(techniques, str):
+        technique_list = [techniques]
+    else:
+        technique_list = list(techniques)
+
+    total = len(technique_list)
+
+    # Build the magic context block
+    if magic_context and magic_context.strip():
+        magic_block = f"=== MAGIC CONTEXT ===\n{magic_context.strip()}\n====================\n\n"
+    else:
+        magic_block = ""
+
+    # Build the character sheet block
+    if player_character_ledger:
+        ledger_section = (
+            f"FICHE PERSONNAGE (pour vérification des restrictions de rang et de quantité):\n"
+            f"{json.dumps(player_character_ledger, indent=2, ensure_ascii=False)}\n\n"
+        )
+    else:
+        ledger_section = "FICHE PERSONNAGE : Non fournie — restrictions de rang non vérifiables sur la fiche.\n\n"
+
+    # Build numbered techniques block
+    techniques_block = ""
+    for i, tech in enumerate(technique_list, 1):
+        techniques_block += f"--- TECHNIQUE {i} ---\n{tech.strip()}\n\n"
+
+    user_payload = (
+        f"{magic_block}"
+        f"{ledger_section}"
+        f"TECHNIQUES À VALIDER ({total} technique{'s' if total > 1 else ''}):\n\n"
+        f"{techniques_block}"
+    )
+
+    # Scale max_tokens with the number of techniques
+    max_tokens = min(3072 + (total - 1) * 1024, 8192)
+
+    try:
+        raw_res = await call_llm(
+            TECHNIQUE_FORGE_PROMPT,
+            user_payload,
+            json_mode=False,
+            temperature=0.1,
+            max_tokens=max_tokens,
+        )
+        scratchpad, _ = parse_dual_layer(raw_res)
+        ruling = parse_ruling(raw_res)
+
+        # Support both the new array format and single-verdict fallback
+        verdicts_list = ruling.get("verdicts")
+        if not verdicts_list:
+            # LLM returned a single-object ruling — wrap it
+            verdicts_list = [ruling]
+
+        # Build one card per technique
+        if total > 1:
+            all_cards = f"## 🔨 FORGE DE TECHNIQUES — {total} TECHNIQUES SOUMISES\n\n"
+            all_cards += f"#### 📊 ANALYSE GLOBALE (SCRATCHPAD)\n{scratchpad}\n\n---\n\n"
+        else:
+            all_cards = f"#### 📊 ANALYSE (SCRATCHPAD)\n{scratchpad}\n\n---\n\n"
+
+        for i, v in enumerate(verdicts_list, 1):
+            all_cards += _build_verdict_card(v, scratchpad, i, total)
+            if i < len(verdicts_list):
+                all_cards += "\n---\n\n"
+
+        return {
+            "scratchpad": scratchpad,
+            "director_prose": all_cards,
+            "director_entity_updates": [],
+            "sparks_new_entity": False,
+            "agent_metadata": {"verdicts": verdicts_list, "total": total},
+        }
+
+    except Exception as e:
+        logger.error(f"Error in run_technique_forge: {e}")
+        return {
+            "scratchpad": "Error occurred.",
+            "director_prose": "La Forge est temporairement hors ligne. Veuillez réessayer.",
+            "director_entity_updates": [],
+            "sparks_new_entity": False,
+            "agent_metadata": {},
         }
 
 

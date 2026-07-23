@@ -476,7 +476,7 @@ def get_player_character(universe_id: str, char_id: str) -> dict:
     """Retrieves a player character sheet by char_id and universe_id.
 
     Returns a dict with char_name, faction, stats (JSONB), points (JSONB),
-    inventory (JSONB), fortune, and blessings. Returns None if not found.
+    inventory (JSONB), fortune, blessings, and avatar_url. Returns None if not found.
     """
     try:
         conn = get_db_connection()
@@ -484,7 +484,7 @@ def get_player_character(universe_id: str, char_id: str) -> dict:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT char_name, faction, stats, points, inventory, fortune, blessings
+                    SELECT char_name, faction, stats, points, inventory, fortune, blessings, avatar_url
                     FROM yinyang.player_characters
                     WHERE char_id = %s AND universe_id = %s;
                     """,
@@ -609,4 +609,66 @@ def get_revealed_techniques(session_id: str, techniques_list: list[str] = None) 
     except Exception as e:
         logger.error(f"Error scanning for revealed techniques: {e}")
         return []
+
+
+def get_non_player_character(universe_id: str, name: str) -> dict:
+    """Retrieves a non-player character (PNJ) by name and universe_id."""
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT name, npc_type, faction, stats, properties, image_url, is_alive, current_location_id
+                    FROM yinyang.non_player_characters
+                    WHERE name = %s AND universe_id = %s;
+                    """,
+                    (name, universe_id)
+                )
+                return cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error getting non-player character: {e}")
+        return None
+
+
+def upsert_non_player_character(
+    universe_id: str,
+    name: str,
+    npc_type: str,
+    faction: str,
+    stats: dict,
+    properties: dict,
+    image_url: str = None,
+    is_alive: bool = True,
+    current_location_id: str = None
+):
+    """Upserts a non-player character (PNJ) into the database."""
+    try:
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO yinyang.non_player_characters (universe_id, name, npc_type, faction, stats, properties, image_url, is_alive, current_location_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (universe_id, name)
+                    DO UPDATE SET
+                        npc_type = EXCLUDED.npc_type,
+                        faction = EXCLUDED.faction,
+                        stats = EXCLUDED.stats,
+                        properties = yinyang.non_player_characters.properties || EXCLUDED.properties,
+                        image_url = COALESCE(EXCLUDED.image_url, yinyang.non_player_characters.image_url),
+                        is_alive = EXCLUDED.is_alive,
+                        current_location_id = COALESCE(EXCLUDED.current_location_id, yinyang.non_player_characters.current_location_id);
+                    """,
+                    (universe_id, name, npc_type, faction, Json(stats), Json(properties), image_url, is_alive, current_location_id)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Error upserting non-player character: {e}")
+
 

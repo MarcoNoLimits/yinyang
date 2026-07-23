@@ -21,6 +21,7 @@ DROP TABLE IF EXISTS yinyang.chats CASCADE;
 DROP TABLE IF EXISTS yinyang.favourites CASCADE;
 DROP TABLE IF EXISTS yinyang.characters CASCADE;
 DROP TABLE IF EXISTS yinyang.player_characters CASCADE;
+DROP TABLE IF EXISTS yinyang.non_player_characters CASCADE;
 DROP TABLE IF EXISTS yinyang.users CASCADE;
 DROP TABLE IF EXISTS yinyang.session_chat_history CASCADE;
 
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS yinyang.player_characters (
     inventory JSONB NOT NULL DEFAULT '[]'::jsonb,
     fortune BIGINT NOT NULL DEFAULT 50000,
     blessings TEXT[] DEFAULT '{}',
+    avatar_url VARCHAR(1000),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -129,6 +131,23 @@ CREATE TABLE IF NOT EXISTS yinyang.entities (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT unique_universe_entity_name UNIQUE(universe_id, name)
 );
+
+-- 14b. Create Non-Player Characters (PNJs) Table (Gods, Legendary, general NPCs)
+CREATE TABLE IF NOT EXISTS yinyang.non_player_characters (
+    npc_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    universe_id UUID NOT NULL REFERENCES yinyang.universes(universe_id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    npc_type VARCHAR(50) NOT NULL DEFAULT 'NPC', -- 'NPC', 'GOD', 'LEGENDARY', 'DEITY'
+    faction VARCHAR(100),
+    stats JSONB NOT NULL DEFAULT '{"Force": 0, "Vitesse": 0, "Endurance": 0, "Résistance": 0, "Réserve": 0, "Puissance": 0, "Mental": 0, "Réactivité": 0, "Charisme": 0, "Intelligence": 0}'::jsonb,
+    properties JSONB NOT NULL DEFAULT '{}'::jsonb,
+    image_url VARCHAR(1000),
+    current_location_id UUID REFERENCES yinyang.entities(entity_id) ON DELETE SET NULL,
+    is_alive BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_universe_npc_name UNIQUE(universe_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_npcs_universe_name ON yinyang.non_player_characters(universe_id, name);
 
 -- 15. Create Sessions Table (mapping dynamic state)
 CREATE TABLE IF NOT EXISTS yinyang.sessions (
@@ -968,6 +987,39 @@ ON CONFLICT (entity_id) DO UPDATE SET
     name = EXCLUDED.name,
     properties = EXCLUDED.properties,
     current_location_id = EXCLUDED.current_location_id;
+
+-- Move seeded NPCs and Deities to the non_player_characters table
+INSERT INTO yinyang.non_player_characters (npc_id, universe_id, name, npc_type, faction, stats, properties, image_url, current_location_id, is_alive)
+SELECT 
+    entity_id, 
+    universe_id, 
+    name, 
+    CASE 
+        WHEN entity_type = 'DEITY' THEN 'DEITY'
+        WHEN (properties->>'rank')::int IS NOT NULL THEN 'LEGENDARY'
+        ELSE 'NPC'
+    END as npc_type,
+    properties->>'faction',
+    CASE 
+        WHEN entity_type = 'DEITY' THEN '{"Force": 18, "Vitesse": 18, "Endurance": 18, "Résistance": 18, "Réserve": 18, "Puissance": 18, "Mental": 18, "Réactivité": 18, "Charisme": 18, "Intelligence": 18}'::jsonb
+        WHEN (properties->>'rank')::int <= 5 THEN '{"Force": 15, "Vitesse": 15, "Endurance": 15, "Résistance": 15, "Réserve": 15, "Puissance": 15, "Mental": 15, "Réactivité": 15, "Charisme": 15, "Intelligence": 15}'::jsonb
+        WHEN (properties->>'rank')::int <= 15 THEN '{"Force": 11, "Vitesse": 11, "Endurance": 11, "Résistance": 11, "Réserve": 11, "Puissance": 11, "Mental": 11, "Réactivité": 11, "Charisme": 11, "Intelligence": 11}'::jsonb
+        ELSE '{"Force": 6, "Vitesse": 6, "Endurance": 6, "Résistance": 6, "Réserve": 6, "Puissance": 6, "Mental": 6, "Réactivité": 6, "Charisme": 6, "Intelligence": 6}'::jsonb
+    END as stats,
+    properties,
+    '/assets/images/portraits/' || LOWER(REPLACE(name, ' ', '_')) || '.png',
+    current_location_id,
+    is_alive
+FROM yinyang.entities
+WHERE entity_type IN ('NPC', 'DEITY')
+ON CONFLICT (universe_id, name) DO UPDATE SET
+    npc_type = EXCLUDED.npc_type,
+    faction = EXCLUDED.faction,
+    stats = EXCLUDED.stats,
+    properties = EXCLUDED.properties,
+    image_url = EXCLUDED.image_url,
+    current_location_id = EXCLUDED.current_location_id,
+    is_alive = EXCLUDED.is_alive;
 
 -- ============================================================
 -- CHARACTER COMBAT STATE (volatile, per-session tracking)

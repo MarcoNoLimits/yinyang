@@ -71,6 +71,7 @@ class SwarmState(TypedDict):
     
     extracted_summary: str
     state_deltas: Dict[str, Any]
+    encounter_pnj: Optional[Dict[str, Any]]
 
 # --- Node Implementation Functions ---
 
@@ -141,8 +142,23 @@ async def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
         quests_str = "No active quests."
 
     companion_str = ""
+    pnj_data = None
     if state.get("char_name"):
-        companion_str = f"ACTIVE COMPANION:\nName: {state['char_name']}\nPersonality: {state.get('char_personality', '')}\n\n"
+        from db import get_non_player_character
+        pnj_data = get_non_player_character(universe_id, state["char_name"])
+        if pnj_data:
+            companion_str = (
+                f"ACTIVE ENCOUNTER / COMPANION (PNJ):\n"
+                f"Name: {pnj_data.get('name')}\n"
+                f"Type: {pnj_data.get('npc_type', 'NPC')}\n"
+                f"Faction: {pnj_data.get('faction')}\n"
+                f"Image/Appearance: {pnj_data.get('image_url') or 'No image'}\n"
+                f"Stats: {json.dumps(pnj_data.get('stats'), ensure_ascii=False)}\n"
+                f"Properties: {json.dumps(pnj_data.get('properties'), ensure_ascii=False)}\n"
+                f"Status: {'ALIVE' if pnj_data.get('is_alive', True) else 'DEAD/DEFEATED'}\n\n"
+            )
+        else:
+            companion_str = f"ACTIVE COMPANION:\nName: {state['char_name']}\nPersonality: {state.get('char_personality', '')}\n\n"
 
     ledger = {}
     if char_id and char_data:
@@ -296,7 +312,8 @@ async def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
                 "techniques": techniques_ledger,
                 "equipment": equipment_ledger,
                 "points": {k: v for k, v in points.items() if k not in ["techniques"]},
-                "fortune": char_data.get("fortune", 50000)
+                "fortune": char_data.get("fortune", 50000),
+                "avatar_url": char_data.get("avatar_url")
             },
             "anti_metagaming_rules": [
                 "NPCs cannot reference HIDDEN techniques/items unless the player has used them in their presence.",
@@ -334,14 +351,15 @@ async def run_prompt_weaver(state: SwarmState) -> Dict[str, Any]:
     return {
         "master_prompt": master_prompt, 
         "timeline_context": timeline_str,
-        "player_character_ledger": ledger
+        "player_character_ledger": ledger,
+        "encounter_pnj": pnj_data
     }
 
 async def run_intent_router_node(state: SwarmState) -> Dict[str, Any]:
     """Router Node: Classifies player intent into one of four nodes."""
     logger.info("Running Intent Router Node...")
     override = state.get("agent_override")
-    if override and override in {"NARRATIVE_DIRECTOR", "WORLDSMITH", "PERSONA_BLACKSMITH", "GRAND_ARBITER"}:
+    if override and override in {"NARRATIVE_DIRECTOR", "WORLDSMITH", "PERSONA_BLACKSMITH", "GRAND_ARBITER", "SCENARIO_ARCHITECT"}:
         logger.info(f"Using manual agent override: {override}")
         return {"active_route": override}
     route = await classify_intent(state["master_prompt"], state["player_input"])
@@ -616,8 +634,8 @@ async def run_persona_emulator(state: SwarmState) -> Dict[str, Any]:
     # Skip persona for GRAND_ARBITER and SCENARIO_ARCHITECT — neither produces NPC dialogue
     active_route = state.get("active_route")
     agent_override = state.get("agent_override")
-    if active_route in {"GRAND_ARBITER", "SCENARIO_ARCHITECT"} or \
-       agent_override in {"GRAND_ARBITER", "SCENARIO_ARCHITECT"}:
+    if active_route in {"GRAND_ARBITER", "SCENARIO_ARCHITECT", "NARRATIVE_DIRECTOR"} or \
+       agent_override in {"GRAND_ARBITER", "SCENARIO_ARCHITECT", "NARRATIVE_DIRECTOR"}:
         logger.info(f"{active_route or agent_override} active. Skipping Persona Emulator.")
         return {"final_dialogue": ""}
 

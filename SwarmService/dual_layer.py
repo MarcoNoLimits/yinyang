@@ -48,6 +48,9 @@ def parse_dual_layer(raw_output: str) -> Tuple[str, str]:
         if not scratchpad_match:
             logger.warning("No <SCRATCHPAD> or <PROSE> markers found in LLM output. Using cleaned raw output as prose.")
 
+    # Clean any unclosed or leftover <PROSE> / </PROSE> tags from prose text
+    prose = re.sub(r"</?PROSE>", "", prose, flags=re.IGNORECASE).strip()
+
     return scratchpad, prose
 
 def parse_metadata(raw_output: str) -> Dict[str, Any]:

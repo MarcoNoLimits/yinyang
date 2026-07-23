@@ -1,0 +1,60 @@
+{
+  "zone": "Forêt de Vianum — Ithis",
+  "title": "Le Sacrilège de la Lune Rouge",
+  "rewards": {
+    "pe": 3500,
+    "pn": 1800,
+    "pr": 280,
+    "xp": 3500,
+    "items": [
+      "Pack (2 Nectar de vigueur, 2 Sang rouges, 1 Sang du Griffon, 1 Sang de L'Ekhidna)",
+      "3 Talismans de lune (protection contre les métamorphes)",
+      "1 Croc de lycan (objet artisanal, peut être transformé en arme bénite de Khālian)"
+    ],
+    "po_jo": "35.000.000 PO et JO",
+    "appreciation": "Tu as affronté la folie d'un druide déchu sous une lune rouge, sauvé des innocents, et prouvé que la lumière triomphe même dans les ténèbres les plus profondes de Vianum. Khālian elle-même pourrait te devoir une faveur.",
+    "special_gain": "1 Loup de l'ombre (Monture rare, aptitude : furtivité nocturne)"
+  },
+  "gm_notes": "BRANCHING SECRET CONDITIONS:\n1. Si les joueurs échouent à trouver le temple avant la 3e heure, le rituel avance d'une phase : les suivants commencent à sacrifier un prisonnier par heure. À minuit, le portail s'ouvre et un avatar lunaire de Khālian émerge (Rang 6, boss optionnel).\n2. Si un joueur porte une marque de lycanthropie ou un artefact de Khālian, il peut ressentir des pulsions sauvages en entrant dans le temple — jet de Mental (Difficulté 16) pour résister à une transformation forcée temporaire.\n3. Le druide n'est pas un adorateur dévoué de Khālian : il vole son pouvoir. Si les joueurs découvrent un autel souillé (rune de Malakath gravée sous le croissant), ils peuvent briser l'alliance du druide avec la déesse en purifiant le sanctuaire, affaiblissant le boss de 2 rangs.\n4. Le lycan échappé est en fait un ancien suivant qui a survécu à un sacrifice avorté. Il peut être ranimé (via soins magiques) et donner un plan détaillé du temple.",
+  "quest_id": "q_vianum_temple_lune_rouge",
+  "objectives": [
+    {
+      "goal": "Localiser le temple perdu de Khālian en suivant la direction indiquée par le lycan mourant (« à l'est, sous la cicatrice de la vieille lune »).",
+      "faction": "Protecteurs",
+      "failure_condition": "Le rituel atteint son apogée (minuit sous la lune rouge) et le portail s'ouvre, libérant des essences de Khālian.",
+      "success_condition": "Trouver l'entrée du temple avant la fin de la troisième heure de nuit."
+    },
+    {
+      "goal": "Neutraliser le druide profanateur et ses suivants dans le temple.",
+      "faction": "Protecteurs",
+      "failure_condition": "Le druide achève le sacrifice et disparaît dans le portail.",
+      "success_condition": "Le druide est vaincu ou neutralisé avant la fin du rituel."
+    },
+    {
+      "goal": "Sauver les prisonniers retenus pour le sacrifice.",
+      "faction": "Protecteurs",
+      "failure_condition": "Tous les prisonniers sont sacrifiés.",
+      "success_condition": "Au moins 2 prisonniers sur 3 survivent."
+    },
+    {
+      "goal": "Compléter le rituel de la lune rouge.",
+      "faction": "Cultistes (Druide & suivants)",
+      "failure_condition": "Le rituel est interrompu par la mort du druide ou la destruction de l'autel.",
+      "success_condition": "Le druide récite l'invocation finale sous la lumière directe de la lune rouge au sommet du temple."
+    }
+  ],
+  "content_type": "QUÊTE",
+  "danger_level": "☠️☠️☠️☠️",
+  "participants": {
+    "count": 4,
+    "roles": [
+      "protecteur",
+      "cultiste"
+    ]
+  },
+  "special_rules": [
+    "La lune rouge amplifie les capacités métamorphes : tous les ennemis lycanthropes gagnent +1 en Force et Vitesse pendant le combat.",
+    "La végétation du temple est vivante et hostile (lianes, racines) — chaque déplacement nécessite un test d'Agilité (Difficulté 12) ou subir 1d6 dégâts de constriction.",
+    "Le rituel avance en temps réel : toutes les 30 minutes de jeu réelles, un prisonnier est sacrifié jusqu'à épuisement du quota de 3."
+  ]
+}

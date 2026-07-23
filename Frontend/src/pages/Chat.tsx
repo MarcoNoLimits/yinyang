@@ -5,6 +5,8 @@ import React, {
   useCallback,
 } from 'react';
 import QuestCard, { QuestMeta } from '../components/QuestCard';
+import { CombatConsole } from '../components/CombatConsole';
+import { CodexDrawer } from '../components/CodexDrawer';
 
 // ─── Lorebook Data ───────────────────────────────────────────────────────────
 
@@ -66,6 +68,7 @@ interface Message {
   timestamp: Date;
   activeRoute?: string;
   questMeta?: QuestMeta;
+  avatarUrl?: string | null;
 }
 
 interface Entity {
@@ -97,7 +100,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 
 const fetchWithRetry = async (url: string, options: RequestInit = {}, retries = 2, delay = 1000): Promise<Response> => {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds timeout
+  const timeoutId = setTimeout(() => controller.abort(), 180000); // 180 seconds timeout
   
   try {
     const response = await fetch(url, {
@@ -292,11 +295,25 @@ function MessageBubble({ message }: { message: Message }) {
   }
 
   if (isDirector) {
+    const route = message.activeRoute || 'NARRATIVE_DIRECTOR';
+    const routeLabel = 
+      route === 'SCENARIO_ARCHITECT' ? 'ARCHITECTE DE SCÉNARIO' :
+      route === 'WORLDSMITH' ? 'WORLDSMITH' :
+      route === 'PERSONA_BLACKSMITH' ? 'BLACKSMITH' :
+      route === 'GRAND_ARBITER' ? 'ARBITRE DE JEU' :
+      'DIRECTEUR NARRATIF';
+    const routeIcon = 
+      route === 'SCENARIO_ARCHITECT' ? '🏰' :
+      route === 'WORLDSMITH' ? '🗺️' :
+      route === 'PERSONA_BLACKSMITH' ? '👤' :
+      route === 'GRAND_ARBITER' ? '⚖️' :
+      '✦';
+
     return (
       <div style={styles.directorMessage}>
         <div style={styles.directorHeader}>
-          <span style={styles.directorIcon}>✦</span>
-          <span style={styles.directorLabel}>DIRECTEUR NARRATIF</span>
+          <span style={styles.directorIcon}>{routeIcon}</span>
+          <span style={styles.directorLabel}>{routeLabel}</span>
           <span style={styles.messageTime}>
             {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
           </span>
@@ -309,30 +326,73 @@ function MessageBubble({ message }: { message: Message }) {
   if (isPlayer) {
     return (
       <div style={styles.playerMessageWrapper}>
-        <div style={styles.playerMessage}>
-          <div style={styles.playerContent}>{message.content}</div>
-          <div style={styles.playerMeta}>
-            <span style={styles.playerLabel}>VOUS</span>
-            <span style={styles.messageTimePlayer}>
-              {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-            </span>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', justifyContent: 'flex-end', maxWidth: '85%' }}>
+          <div style={styles.playerMessage}>
+            <div style={styles.playerContent}>{message.content}</div>
+            <div style={styles.playerMeta}>
+              <span style={styles.playerLabel}>VOUS</span>
+              <span style={styles.messageTimePlayer}>
+                {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+          </div>
+          {/* PJ Avatar */}
+          <div style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '6px',
+            background: '#1b1735',
+            border: '1px solid #c084fc60',
+            overflow: 'hidden',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0
+          }}>
+            {message.avatarUrl ? (
+              <img src={message.avatarUrl} alt="Joueur" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <span style={{ fontSize: '14px' }}>👤</span>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  // NPC
+  // NPC / PNJ
   return (
-    <div style={styles.npcMessage}>
-      <div style={styles.npcHeader}>
-        <span style={styles.npcIcon}>◈</span>
-        <span style={styles.npcName}>{message.npcName ?? 'Entité Inconnue'}</span>
-        <span style={styles.messageTime}>
-          {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-        </span>
+    <div style={styles.npcMessageWrapper}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', maxWidth: '85%' }}>
+        {/* PNJ Avatar */}
+        <div style={{
+          width: '32px',
+          height: '32px',
+          borderRadius: '6px',
+          background: '#121024',
+          border: '1px solid #3b2f63',
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0
+        }}>
+          {message.avatarUrl ? (
+            <img src={message.avatarUrl} alt={message.npcName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <span style={{ fontSize: '14px' }}>◈</span>
+          )}
+        </div>
+        <div style={styles.npcMessage}>
+          <div style={styles.npcHeader}>
+            <span style={styles.npcName}>{message.npcName ?? 'Entité Inconnue'}</span>
+            <span style={styles.messageTime}>
+              {message.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+          <div style={styles.npcContent}>{parseNarrative(message.content)}</div>
+        </div>
       </div>
-      <div style={styles.npcContent}>{parseNarrative(message.content)}</div>
     </div>
   );
 }
@@ -440,6 +500,10 @@ const Chat: React.FC = () => {
   const [scratchpad, setScratchpad] = useState<string>('');
   const [showScratchpad, setShowScratchpad] = useState<boolean>(false);
   const [characterState, setCharacterState] = useState<any>(null);
+  const [activePnj, setActivePnj] = useState<any>(null);
+  const [showCodex, setShowCodex] = useState<boolean>(false);
+  const [showCombat, setShowCombat] = useState<boolean>(false);
+  const [agentMetadata, setAgentMetadata] = useState<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -574,6 +638,7 @@ const Chat: React.FC = () => {
       role: 'player',
       content: trimmed,
       timestamp: new Date(),
+      avatarUrl: characterState?.character?.avatar_url || null
     };
 
     const updatedMessagesWithPlayer = [...messages, playerMsg];
@@ -612,6 +677,7 @@ const Chat: React.FC = () => {
         scratchpad?: string;
         character_state?: any;
         agent_metadata?: any;
+        encounter_pnj?: any;
       } = await response.json();
 
       const newMessages: Message[] = [];
@@ -620,6 +686,16 @@ const Chat: React.FC = () => {
       setActiveRoute(data.active_route || 'NARRATIVE_DIRECTOR');
       setScratchpad(data.scratchpad || '');
       setCharacterState(data.character_state || null);
+      setActivePnj(data.encounter_pnj || null);
+      setAgentMetadata(data.agent_metadata || null);
+
+      if (data.active_route === 'GRAND_ARBITER') {
+        setShowCombat(true);
+        setShowCodex(false);
+      } else if (data.encounter_pnj) {
+        setShowCodex(true);
+        setShowCombat(false);
+      }
 
       if (data.char_id) {
         setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, charId: data.char_id } : s));
@@ -645,16 +721,25 @@ const Chat: React.FC = () => {
       }
 
       if (data.world_event) {
+        const isScenario = data.active_route === 'SCENARIO_ARCHITECT';
+        const questMeta = isScenario ? {
+          content_type: data.agent_metadata?.content_type || 'QUÊTE',
+          title: data.agent_metadata?.title || 'Quête Légendaire',
+          ...(data.agent_metadata || {})
+        } : undefined;
+
         newMessages.push({
           id: crypto.randomUUID(),
           role: 'director',
           content: data.world_event,
           timestamp: new Date(),
+          activeRoute: data.active_route,
+          questMeta: questMeta,
         });
       }
 
-      // Only show NPC dialogue for non-Arbiter routes (no "Le Monde" after a verdict)
-      if (data.character_output && data.active_route !== 'GRAND_ARBITER') {
+      // Only show NPC dialogue for non-Arbiter and non-Scenario routes
+      if (data.character_output && data.active_route !== 'GRAND_ARBITER' && data.active_route !== 'SCENARIO_ARCHITECT') {
         const npcName = data.npc_name ?? activeNPC ?? 'Le Monde';
         newMessages.push({
           id: crypto.randomUUID(),
@@ -662,6 +747,7 @@ const Chat: React.FC = () => {
           content: data.character_output,
           npcName,
           timestamp: new Date(),
+          avatarUrl: data.encounter_pnj?.image_url || null
         });
 
         if (data.npc_name) {
@@ -999,7 +1085,7 @@ const Chat: React.FC = () => {
         </aside>
         <main style={styles.centerPanel}>
           {/* Context banner with routing indicator */}
-          <div style={{ ...styles.contextBanner, display: 'flex', justifyContent: 'space-between', paddingRight: '15px' }}>
+          <div style={{ ...styles.contextBanner, display: 'flex', justifyContent: 'space-between', paddingRight: '15px', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={styles.contextIcon}>◉</span>
               <span style={styles.contextText}>
@@ -1008,25 +1094,59 @@ const Chat: React.FC = () => {
                   : `Explorant ${activeLocation} — Aucun PNJ actif`}
               </span>
             </div>
-            {activeRoute && (
-              <div style={{
-                fontSize: '9px',
-                fontWeight: 'bold',
-                padding: '2px 8px',
-                borderRadius: '4px',
-                border: '1px solid',
-                letterSpacing: '0.05em',
-                ...(activeRoute === 'GRAND_ARBITER' ? { color: '#f87171', borderColor: '#b91c1c60', background: '#991b1b20' } :
-                    activeRoute === 'WORLDSMITH' ? { color: '#818cf8', borderColor: '#4338ca60', background: '#3730a320' } :
-                    activeRoute === 'PERSONA_BLACKSMITH' ? { color: '#34d399', borderColor: '#065f4660', background: '#064e3b20' } :
-                    { color: '#c084fc', borderColor: '#6b21a860', background: '#581c8720' })
-              }}>
-                {activeRoute === 'GRAND_ARBITER' ? '⚖️ ARBITRE DE JEU' :
-                 activeRoute === 'WORLDSMITH' ? '🗺️ WORLDSMITH' :
-                 activeRoute === 'PERSONA_BLACKSMITH' ? '👤 BLACKSMITH' :
-                 '🎭 DIRECTEUR NARRATIF'}
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {activeRoute && (
+                <div style={{
+                  fontSize: '9px',
+                  fontWeight: 'bold',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid',
+                  letterSpacing: '0.05em',
+                  ...(activeRoute === 'GRAND_ARBITER' ? { color: '#f87171', borderColor: '#b91c1c60', background: '#991b1b20' } :
+                      activeRoute === 'WORLDSMITH' ? { color: '#818cf8', borderColor: '#4338ca60', background: '#3730a320' } :
+                      activeRoute === 'PERSONA_BLACKSMITH' ? { color: '#34d399', borderColor: '#065f4660', background: '#064e3b20' } :
+                      { color: '#c084fc', borderColor: '#6b21a860', background: '#581c8720' })
+                }}>
+                  {activeRoute === 'GRAND_ARBITER' ? '⚖️ ARBITRE DE JEU' :
+                   activeRoute === 'WORLDSMITH' ? '🗺️ WORLDSMITH' :
+                   activeRoute === 'PERSONA_BLACKSMITH' ? '👤 BLACKSMITH' :
+                   '🎭 DIRECTEUR NARRATIF'}
+                </div>
+              )}
+              <button 
+                onClick={() => { setShowCodex(!showCodex); setShowCombat(false); }}
+                style={{
+                  background: showCodex ? '#581c8760' : '#12102a',
+                  border: `1px solid ${showCodex ? '#c084fc' : '#2a2440'}`,
+                  borderRadius: '4px',
+                  color: showCodex ? '#fff' : '#8b84a8',
+                  fontSize: '9px',
+                  fontWeight: 'bold',
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                  letterSpacing: '0.05em'
+                }}
+              >
+                📖 CODEX
+              </button>
+              <button 
+                onClick={() => { setShowCombat(!showCombat); setShowCodex(false); }}
+                style={{
+                  background: showCombat ? '#991b1b60' : '#12102a',
+                  border: `1px solid ${showCombat ? '#ef4444' : '#2a2440'}`,
+                  borderRadius: '4px',
+                  color: showCombat ? '#fff' : '#8b84a8',
+                  fontSize: '9px',
+                  fontWeight: 'bold',
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                  letterSpacing: '0.05em'
+                }}
+              >
+                ⚖️ ARBITRE
+              </button>
+            </div>
           </div>
 
           {/* Collapsible scratchpad debugger */}
@@ -1162,193 +1282,85 @@ const Chat: React.FC = () => {
           </div>
         </main>
 
-        {/* ── RIGHT SIDEBAR ── */}
-        <aside style={styles.rightSidebar}>
-          {/* Faction badges */}
-          <div style={styles.sideSection}>
-            <div style={styles.sideSectionLabel}>CHOISIR UNE FACTION</div>
-            <div style={styles.factionGrid}>
-              {FACTIONS.map((f) => (
-                <FactionBadge
-                  key={f}
-                  name={f}
-                  selected={selectedFaction === f}
-                  onClick={() => setSelectedFaction((prev) => (prev === f ? null : f))}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div style={styles.lorebookDivider} />
-
-          {/* Lorebook */}
-          <div style={styles.lorebookSection}>
-            <div style={styles.lorebookHeader}>
-              <span style={styles.lorebookIcon}>📖</span> GRIMOIRE
-            </div>
-
-            <AccordionSection
-              title="Fiche de Personnage"
-              open={lorebookOpen.fiche}
-              onToggle={() => toggleLorebook('fiche')}
-            >
-              {characterState ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '5px' }}>
-                  <div style={{ fontSize: '11px', color: '#c9a84c', fontWeight: 'bold', borderBottom: '1px solid #2a2440', paddingBottom: '4px', letterSpacing: '0.05em' }}>
-                    {characterState.name} — {characterState.faction} ({characterState.rank})
-                  </div>
-                  
-                  {/* Stats list */}
-                  {characterState.stats && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                      {Object.entries(characterState.stats).map(([statName, sInfo]: any) => (
-                        <div key={statName} style={{ display: 'flex', justifyContent: 'space-between', background: '#12102a', padding: '4px 6px', borderRadius: '4px', border: '1px solid #2a2440', fontSize: '9px' }}>
-                          <span style={{ color: '#8b84a8' }}>{statName}</span>
-                          <span style={{ color: sInfo.category === 'strong' ? '#c9a84c' : '#e2e0d6', fontWeight: 'bold' }}>
-                            {sInfo.value}{sInfo.category === 'strong' && '★'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Techniques list */}
-                  {characterState.techniques && characterState.techniques.length > 0 && (
-                    <div style={{ marginTop: '4px' }}>
-                      <div style={{ fontSize: '9px', color: '#6b21a8', fontWeight: 'bold', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Techniques & Sorts</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        {characterState.techniques.map((tech: any, i: number) => (
-                          <div key={i} style={{ background: tech.visibility === 'REVEALED' ? '#1c1936' : '#12102a', padding: '5px 6px', borderRadius: '4px', border: '1px solid #2a2440', fontSize: '9px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
-                              <span style={{ color: tech.visibility === 'REVEALED' ? '#c9a84c' : '#8b84a8' }}>
-                                {tech.name} {tech.visibility === 'HIDDEN' && '🔒'}
-                              </span>
-                              <span style={{ color: '#6b21a8' }}>{tech.rank}</span>
-                            </div>
-                            {tech.description && (
-                              <div style={{ fontSize: '8px', color: '#8b84a8', marginTop: '2px', fontStyle: 'italic' }}>
-                                {tech.description}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Fortune */}
-                  {characterState.fortune !== undefined && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#8b84a8', marginTop: '4px', borderTop: '1px solid #2a2440', paddingTop: '4px' }}>
-                      <span>Fortune:</span>
-                      <span style={{ color: '#c9a84c', fontWeight: 'bold' }}>{characterState.fortune.toLocaleString()} PO</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div style={{ fontSize: '10px', color: '#4a4570', fontStyle: 'italic', textAlign: 'center', padding: '10px' }}>
-                  Aucune fiche active. Créez ou sélectionnez un jeu de rôle.
-                </div>
-              )}
-            </AccordionSection>
-
-            <AccordionSection
-              title="Les 12 Divinités"
-              open={lorebookOpen.divinites}
-              onToggle={() => toggleLorebook('divinites')}
-            >
-              {DIVINITES.map((d) => (
-                <div key={d.name} style={styles.diviniteRow}>
-                  <span style={styles.diviniteName}>{d.name}</span>
-                  <span style={styles.diviniteDomain}>{d.domain}</span>
-                </div>
-              ))}
-            </AccordionSection>
-
-            <AccordionSection
-              title="Les Factions"
-              open={lorebookOpen.factions}
-              onToggle={() => toggleLorebook('factions')}
-            >
-              <div style={styles.factionList}>
+        {/* ── RIGHT SIDEBAR / PANELS ── */}
+        {showCombat ? (
+          <CombatConsole metadata={agentMetadata} onClose={() => setShowCombat(false)} />
+        ) : showCodex ? (
+          <CodexDrawer
+            onClose={() => setShowCodex(false)}
+            activePnj={activeNPC}
+            characterState={characterState}
+            divinites={DIVINITES}
+            factions={FACTIONS}
+            grandesPuissances={GRANDES_PUISSANCES}
+          />
+        ) : (
+          <aside style={styles.rightSidebar}>
+            {/* Faction badges */}
+            <div style={styles.sideSection}>
+              <div style={styles.sideSectionLabel}>CHOISIR UNE FACTION</div>
+              <div style={styles.factionGrid}>
                 {FACTIONS.map((f) => (
-                  <span key={f} style={styles.factionListItem}>
-                    {f}
-                  </span>
+                  <FactionBadge
+                    key={f}
+                    name={f}
+                    selected={selectedFaction === f}
+                    onClick={() => setSelectedFaction((prev) => (prev === f ? null : f))}
+                  />
                 ))}
               </div>
-            </AccordionSection>
+            </div>
 
-            <AccordionSection
-              title="Grandes Puissances"
-              open={lorebookOpen.puissances}
-              onToggle={() => toggleLorebook('puissances')}
-            >
-              {GRANDES_PUISSANCES.map((p) => (
-                <div key={p.rank} style={styles.puissanceRow}>
-                  <span style={styles.puissanceRank}>#{p.rank}</span>
-                  <div style={styles.puissanceInfo}>
-                    <span style={styles.puissanceName}>{p.name}</span>
-                    <span style={styles.puissanceTitle}>{p.title}</span>
-                    <span style={styles.puissanceFaction}>{p.faction}</span>
-                  </div>
+            <div style={styles.lorebookDivider} />
+
+            {/* Entity Ledger */}
+            <div style={styles.sideSection}>
+              <div style={styles.sideSectionLabel}>ENTITÉS RENCONTRÉES</div>
+              {entities.length === 0 ? (
+                <div style={styles.emptyState}>Aucune entité rencontrée</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {entities.map((e, i) => (
+                    <div key={i} style={styles.entityRow}>
+                      <span style={styles.entityDot} />
+                      <span style={styles.entityName}>{e.name}</span>
+                      <span style={styles.entityType}>{e.type}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </AccordionSection>
-          </div>
+              )}
+            </div>
 
-          <div style={styles.lorebookDivider} />
+            <div style={styles.lorebookDivider} />
 
-          {/* Entity Ledger */}
-          <div style={styles.sideSection}>
-            <div style={styles.sideSectionLabel}>ENTITÉS RENCONTRÉES</div>
-            {entities.length === 0 ? (
-              <div style={styles.emptyState}>Aucune entité rencontrée</div>
-            ) : (
-              entities.map((e, i) => (
-                <div key={i} style={styles.entityRow}>
-                  <span style={styles.entityDot} />
-                  <span style={styles.entityName}>{e.name}</span>
-                  <span style={styles.entityType}>{e.type}</span>
-                  <span
-                    style={{
-                      ...styles.entityStatus,
-                      color: e.status === 'Actif' ? '#c9a84c' : '#6b21a8',
-                    }}
-                  >
-                    {e.status}
-                  </span>
+            {/* Quest Log */}
+            <div style={styles.sideSection}>
+              <div style={styles.sideSectionLabel}>JOURNAL DE QUÊTES</div>
+              {quests.length === 0 ? (
+                <div style={styles.emptyState}>Aucune quête active</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {quests.map((q) => (
+                    <div key={q.id} style={styles.questRow}>
+                      <span
+                        style={{
+                          ...styles.questStatusDot,
+                          background:
+                            q.status === 'active'
+                              ? '#c9a84c'
+                              : q.status === 'completed'
+                              ? '#22c55e'
+                              : '#dc2626',
+                        }}
+                      />
+                      <span style={styles.questTitle}>{q.title}</span>
+                    </div>
+                  ))}
                 </div>
-              ))
-            )}
-          </div>
-
-          <div style={styles.lorebookDivider} />
-
-          {/* Quest Log */}
-          <div style={styles.sideSection}>
-            <div style={styles.sideSectionLabel}>JOURNAL DE QUÊTES</div>
-            {quests.length === 0 ? (
-              <div style={styles.emptyState}>Aucune quête active</div>
-            ) : (
-              quests.map((q) => (
-                <div key={q.id} style={styles.questRow}>
-                  <span
-                    style={{
-                      ...styles.questStatusDot,
-                      background:
-                        q.status === 'active'
-                          ? '#c9a84c'
-                          : q.status === 'completed'
-                          ? '#22c55e'
-                          : '#dc2626',
-                    }}
-                  />
-                  <span style={styles.questTitle}>{q.title}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </aside>
+              )}
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* ── CREATION MODAL ── */}
@@ -1819,6 +1831,13 @@ const styles: Record<string, React.CSSProperties> = {
   messageTimePlayer: {
     fontSize: '10px',
     color: '#3a2800',
+  },
+
+  npcMessageWrapper: {
+    display: 'flex',
+    justifyContent: 'flex-start',
+    width: '100%',
+    marginBottom: '20px',
   },
 
   // NPC message
